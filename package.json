@@ -1,0 +1,19 @@
+{
+  "name": "music-bot",
+  "version": "0.0.1",
+  "module": "src/server/index.ts",
+  "type": "module",
+  "scripts": {
+    "build": "bun build.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/react": "^19.2.14"
+  },
+  "peerDependencies": {
+    "typescript": "^5",
+    "react": "^19",
+    "reselect": "^5",
+    "re-reselect": "^5"
+  }
+}
