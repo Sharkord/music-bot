@@ -9,7 +9,7 @@ The plugin will automatically download the required dependencies (yt-dlp and ffm
 ## Manual Installation
 
 1. Download the latest release from the [Releases](https://github.com/Sharkord/music-bot/releases) page.
-2. Move the `sharkord-music-bot` folder to your Sharkord plugins directory, typically located at `~/.config/sharkord/plugins`. See: [Data Dir](https://sharkord.com/docs/data-dir).
+2. Move the `music-bot` folder to your Sharkord plugins directory, typically located at `~/.config/sharkord/plugins`. See: [Data Dir](https://sharkord.com/docs/data-dir).
 
 ## Screenshots
 
@@ -29,4 +29,4 @@ The plugin will automatically download the required dependencies (yt-dlp and ffm
 Well, turns out this is a bot. If you encounter this issue, you can try the following solutions:
 
 1. Use a different IP address by connecting through a VPN or proxy.
-2. Pass your cookies to yt-dlp to a file in `plugins/sharkord-music-bot/bin/cookies.txt`.
+2. Pass your cookies to yt-dlp to a file in `plugins/music-bot/bin/cookies.txt`.
