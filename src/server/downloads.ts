@@ -18,19 +18,19 @@ const downloadPaths: {
 } = {
   linux_x64: {
     ffmpeg:
-      "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz",
+      "https://github.com/diogomartino/plugin-binaries/releases/latest/download/ffmpeg-linux-x64.tar.gz",
     ytDlp:
       "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux",
   },
   linux_arm64: {
     ffmpeg:
-      "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linuxarm64-gpl.tar.xz",
+      "https://github.com/diogomartino/plugin-binaries/releases/latest/download/ffmpeg-linux-arm64.tar.gz",
     ytDlp:
       "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux_aarch64",
   },
   win32_x64: {
     ffmpeg:
-      "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip",
+      "https://github.com/diogomartino/plugin-binaries/releases/latest/download/ffmpeg-win64.tar.gz",
     ytDlp:
       "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe",
   },
@@ -95,57 +95,11 @@ const extractArchive = async (
   await ensureDir(extractPath, logger);
   logger.log(`Extracting archive ${archivePath} to ${extractPath}`);
 
-  if (archivePath.endsWith(".zip")) {
-    if (process.platform === "win32") {
-      const powershell = Bun.spawn([
-        "powershell",
-        "-NoProfile",
-        "-Command",
-        `Expand-Archive -LiteralPath '${archivePath.replace(/'/g, "''")}' -DestinationPath '${extractPath.replace(/'/g, "''")}' -Force`,
-      ]);
+  const tarball = await Bun.file(archivePath).bytes();
+  const archive = new Bun.Archive(tarball);
+  const entryCount = await archive.extract(extractPath);
 
-      const exitCode = await powershell.exited;
-
-      if (exitCode !== 0) {
-        logger.error(`Failed to extract ZIP archive: ${archivePath}`);
-        throw new Error(`Failed to extract ZIP archive: ${archivePath}`);
-      }
-
-      return;
-    }
-
-    const unzip = Bun.spawn(["unzip", "-o", archivePath, "-d", extractPath], {
-      stdout: "ignore",
-      stderr: "pipe",
-    });
-
-    const exitCode = await unzip.exited;
-
-    if (exitCode !== 0) {
-      logger.error(`Failed to extract ZIP archive: ${archivePath}`);
-      throw new Error(`Failed to extract ZIP archive: ${archivePath}`);
-    }
-
-    return;
-  }
-
-  if (archivePath.endsWith(".tar.xz")) {
-    const tar = Bun.spawn(["tar", "-xJf", archivePath, "-C", extractPath], {
-      stdout: "ignore",
-      stderr: "pipe",
-    });
-
-    const exitCode = await tar.exited;
-
-    if (exitCode !== 0) {
-      logger.error(`Failed to extract tar.xz archive: ${archivePath}`);
-      throw new Error(`Failed to extract tar.xz archive: ${archivePath}`);
-    }
-
-    return;
-  }
-
-  throw new Error(`Unsupported archive format: ${archivePath}`);
+  logger.log(`Extracted ${entryCount} entries from ${archivePath}`);
 };
 
 const downloadFile = async (
@@ -259,11 +213,13 @@ const makeExecutable = async (binaryPath: string): Promise<void> => {
   }
 };
 
-const getDownloadUrl = (arch: string, binary: 'ffmpeg' | 'ytDlp'): string => {
+const getDownloadUrl = (arch: string, binary: "ffmpeg" | "ytDlp"): string => {
   const url = downloadPaths[arch]?.[binary];
 
   if (!url) {
-    throw new Error(`No ${binary} download URL configured for architecture: ${arch}`);
+    throw new Error(
+      `No ${binary} download URL configured for architecture: ${arch}`,
+    );
   }
 
   return url;
@@ -271,16 +227,15 @@ const getDownloadUrl = (arch: string, binary: 'ffmpeg' | 'ytDlp'): string => {
 
 const downloadFFmpeg = async (logger: TDownloadLogger) => {
   const arch = getPlatformArch();
-  const url = getDownloadUrl(arch, 'ffmpeg');
+  const url = getDownloadUrl(arch, "ffmpeg");
   const binaryName = getFfmpegBinaryName();
   const binaryPath = getFfmpegBinaryPath();
 
   logger.log(`Downloading FFmpeg for architecture: ${arch} from URL: ${url}`);
 
-  const archiveExtension = url.endsWith(".tar.xz")
-    ? ".tar.xz"
-    : path.extname(new URL(url).pathname);
-  const archivePath = path.join(DOWNLOAD_DIR, `ffmpeg_${arch}${archiveExtension}`);
+  const urlFilename = path.basename(new URL(url).pathname);
+  const extractedName = urlFilename.replace(/\.tar\.gz$/, "");
+  const archivePath = path.join(DOWNLOAD_DIR, `ffmpeg_${arch}.tar.gz`);
   const extractPath = path.join(DOWNLOAD_DIR, `ffmpeg_extract_${arch}`);
 
   await ensureDir(DOWNLOAD_DIR, logger);
@@ -292,10 +247,14 @@ const downloadFFmpeg = async (logger: TDownloadLogger) => {
 
   await extractArchive(archivePath, extractPath, logger);
 
-  const extractedBinaryPath = await findFileRecursive(extractPath, binaryName);
+  const extractedBinaryPath =
+    (await findFileRecursive(extractPath, extractedName)) ??
+    (await findFileRecursive(extractPath, binaryName));
 
   if (!extractedBinaryPath) {
-    throw new Error(`Could not find ${binaryName} in extracted archive: ${archivePath}`);
+    throw new Error(
+      `Could not find ${extractedName} or ${binaryName} in extracted archive: ${archivePath}`,
+    );
   }
 
   await fs.copyFile(extractedBinaryPath, binaryPath);
@@ -307,7 +266,7 @@ const downloadFFmpeg = async (logger: TDownloadLogger) => {
 
 const downloadYtDlp = async (logger: TDownloadLogger) => {
   const arch = getPlatformArch();
-  const url = getDownloadUrl(arch, 'ytDlp');
+  const url = getDownloadUrl(arch, "ytDlp");
   const binaryPath = getYtDlpBinaryPath();
   const binaryName = getYtDlpBinaryName();
   const archivePath = path.join(DOWNLOAD_DIR, `${binaryName}_${arch}`);
