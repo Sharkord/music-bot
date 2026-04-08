@@ -15,6 +15,23 @@ type TYtDlpOptions = {
   proxy?: string;
 };
 
+const YT_DLP_COMMAND_TIMEOUT_MS = 25000;
+const YT_DLP_HEARTBEAT_MS = 5000;
+const YT_DLP_SOCKET_TIMEOUT_SECONDS = 15;
+const YT_DLP_FORCE_KILL_TIMEOUT_MS = 1500;
+
+const terminateYtDlp = (process: ReturnType<typeof Bun.spawn>): void => {
+  try {
+    process.kill("SIGTERM");
+  } catch {}
+
+  setTimeout(() => {
+    try {
+      process.kill("SIGKILL");
+    } catch {}
+  }, YT_DLP_FORCE_KILL_TIMEOUT_MS);
+};
+
 const isYouTubeUrl = (url: string): boolean =>
   url.includes("youtube.com") ||
   url.includes("youtu.be") ||
@@ -27,20 +44,29 @@ const getYtDlpBaseArgs = async (options: TYtDlpOptions): Promise<string[]> => {
     : [];
   const proxyArgs = options.proxy ? ["--proxy", options.proxy] : [];
 
-  return [
+  const baseArgs = [
     "--js-runtimes",
     "bun",
     "--no-warnings",
     "--no-playlist",
+    "--socket-timeout",
+    String(YT_DLP_SOCKET_TIMEOUT_SECONDS),
     ...cookiesArgs,
     ...proxyArgs,
   ];
+
+  options.log(`Yt-dlp base arguments:`, baseArgs.join(" "));
+
+  return baseArgs;
 };
 
 const runYtDlp = async (
   cmd: string[],
+  label: string,
   options: TYtDlpOptions,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> => {
+  options.log(`[yt-dlp] starting ${label}`);
+
   const proc = Bun.spawn({
     cmd,
     stdout: "pipe",
@@ -48,15 +74,55 @@ const runYtDlp = async (
     stdin: "ignore",
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
+  const startedAt = Date.now();
+  const heartbeatId = setInterval(() => {
+    const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
+
+    options.log(`[yt-dlp] still running (${label}) after ${elapsedSeconds}s`);
+  }, YT_DLP_HEARTBEAT_MS);
+
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      options.error(
+        `[yt-dlp] ${label} timed out after ${YT_DLP_COMMAND_TIMEOUT_MS}ms`,
+      );
+
+      terminateYtDlp(proc);
+
+      reject(
+        new Error(
+          `yt-dlp ${label} timed out after ${YT_DLP_COMMAND_TIMEOUT_MS}ms`,
+        ),
+      );
+    }, YT_DLP_COMMAND_TIMEOUT_MS);
+  });
+
+  const commandPromise = Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
     proc.exited,
-  ]);
+  ]).then(([stdout, stderr, exitCode]) => ({ stdout, stderr, exitCode }));
 
-  if (stderr.trim()) options.error("[yt-dlp]", stderr.trim());
+  try {
+    const { stdout, stderr, exitCode } = await Promise.race([
+      commandPromise,
+      timeoutPromise,
+    ]);
 
-  return { stdout, stderr, exitCode };
+    if (stderr.trim()) options.error("[yt-dlp]", stderr.trim());
+
+    options.log(`[yt-dlp] ${label} finished with exit code ${exitCode}`);
+
+    return { stdout, stderr, exitCode };
+  } finally {
+    clearInterval(heartbeatId);
+
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
 };
 
 const fetchYouTubeAudio = async (
@@ -82,7 +148,7 @@ const fetchYouTubeAudio = async (
 
   options.log("Running command:", cmd.join(" "));
 
-  const res = await runYtDlp(cmd, options);
+  const res = await runYtDlp(cmd, "audio URL fetch", options);
 
   if (res.exitCode !== 0) {
     throw new Error(`yt-dlp failed (exit ${res.exitCode})`);
@@ -165,7 +231,7 @@ const fetchYouTubeMetadata = async (
 
   options.log("Fetching YouTube metadata via yt-dlp:", sourceUrl);
 
-  const res = await runYtDlp(cmd, options);
+  const res = await runYtDlp(cmd, "metadata fetch", options);
 
   if (res.exitCode !== 0) {
     throw new Error(`yt-dlp metadata fetch failed (exit ${res.exitCode})`);

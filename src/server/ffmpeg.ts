@@ -33,6 +33,41 @@ type TMusicOptions = {
   onEnd?: () => void;
 };
 
+const FORCE_KILL_TIMEOUT_MS = 1500;
+const pendingForcedKill = new WeakSet<object>();
+
+const terminateProcess = (
+  process: ReturnType<typeof Bun.spawn> | null,
+): void => {
+  if (!process) return;
+
+  let exited = false;
+
+  process.exited.finally(() => {
+    exited = true;
+  });
+
+  try {
+    process.kill("SIGTERM");
+  } catch {}
+
+  if (pendingForcedKill.has(process as unknown as object)) {
+    return;
+  }
+
+  pendingForcedKill.add(process as unknown as object);
+
+  setTimeout(() => {
+    pendingForcedKill.delete(process as unknown as object);
+
+    if (exited) return;
+
+    try {
+      process.kill("SIGKILL");
+    } catch {}
+  }, FORCE_KILL_TIMEOUT_MS);
+};
+
 const spawnMusicStream = async (
   options: TMusicOptions,
 ): Promise<TMusicStreamResult> => {
@@ -218,9 +253,7 @@ const spawnMusicStream = async (
 
   ffmpegProcess.exited.then(() => {
     if (ytDlpProcess) {
-      try {
-        ytDlpProcess.kill("SIGTERM");
-      } catch {}
+      terminateProcess(ytDlpProcess);
     }
 
     options.onEnd?.();
@@ -237,14 +270,10 @@ const spawnMusicStream = async (
 const killMusicStream = (process: TSpawnedStreamProcess | null): void => {
   if (!process) return;
 
-  try {
-    process.ffmpeg.kill("SIGTERM");
-  } catch {}
+  terminateProcess(process.ffmpeg);
 
   if (process.ytDlp) {
-    try {
-      process.ytDlp.kill("SIGTERM");
-    } catch {}
+    terminateProcess(process.ytDlp);
   }
 };
 
