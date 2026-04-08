@@ -21,6 +21,10 @@ let debug = false;
 let binariesReady = false;
 let binariesInitError: Error | null = null;
 
+type TQueueItem = {
+  sourceUrl: string;
+};
+
 type ChannelStreamState = {
   ffmpegProcess: TMusicStreamResult["process"] | null;
   audioProducer: Producer | null;
@@ -32,6 +36,8 @@ type ChannelStreamState = {
   streamActive: boolean;
   streamStarting: boolean;
   volume: number;
+  queue: TQueueItem[];
+  endAction: "none" | "next";
 };
 
 const channelStreams = new Map<number, ChannelStreamState>();
@@ -51,12 +57,60 @@ const getState = (channelId: number): ChannelStreamState => {
       streamActive: false,
       streamStarting: false,
       volume: 50,
+      queue: [],
+      endAction: "none",
     };
 
     channelStreams.set(channelId, state);
   }
 
   return state;
+};
+
+const formatSourceLabel = (sourceUrl: string): string => {
+  if (sourceUrl.startsWith("ytsearch:")) {
+    return sourceUrl.slice("ytsearch:".length);
+  }
+
+  return sourceUrl;
+};
+
+const enqueueSource = (channelId: number, sourceUrl: string): number => {
+  const state = getState(channelId);
+  state.queue.push({ sourceUrl });
+  return state.queue.length;
+};
+
+const takeNextFromQueue = (channelId: number): TQueueItem | null => {
+  const state = getState(channelId);
+  return state.queue.shift() ?? null;
+};
+
+const buildQueueText = (channelId: number): string => {
+  const state = getState(channelId);
+
+  if (!state.streamActive && state.queue.length === 0) {
+    return "Queue is empty.";
+  }
+
+  const lines: string[] = [];
+
+  if (state.streamActive && state.currentSong) {
+    lines.push(`Now playing: ${state.currentSong}`);
+  }
+
+  if (state.queue.length === 0) {
+    lines.push("Queue: (empty)");
+    return lines.join("\n");
+  }
+
+  lines.push("Queue:");
+
+  for (const [index, item] of state.queue.entries()) {
+    lines.push(`${index + 1}. ${formatSourceLabel(item.sourceUrl)}`);
+  }
+
+  return lines.join("\n");
 };
 
 const cleanupChannel = (channelId: number) => {
@@ -138,11 +192,27 @@ const assertStreamingBinariesReady = async () => {
   );
 };
 
+type StartMusicStreamOptions = {
+  bitrate: string;
+  proxy?: string;
+};
+
+const getPlaybackSettings = async (
+  settings: Awaited<ReturnType<PluginContext["settings"]["register"]>>,
+): Promise<StartMusicStreamOptions> => {
+  const [bitrate, proxy] = await Promise.all([
+    settings.get("bitrate"),
+    settings.get("proxy"),
+  ]);
+
+  return { bitrate, proxy };
+};
+
 const startMusicStream = async (
   ctx: PluginContext,
   channelId: number,
   sourceUrl: string,
-  bitrateSetting: string,
+  options: StartMusicStreamOptions,
 ) => {
   const state = getState(channelId);
 
@@ -212,7 +282,8 @@ const startMusicStream = async (
       rtpHost: ip,
       audioRtpPort: state.audioTransport.tuple.localPort,
       volume: state.volume,
-      bitrate: bitrateSetting,
+      bitrate: options.bitrate,
+      proxy: options.proxy,
       error: (...m) => ctx.error(...m),
       log: (...m) => ctx.log(...m),
       debug: (...m) => {
@@ -222,7 +293,15 @@ const startMusicStream = async (
       },
       onEnd: () => {
         ctx.log("Music ended in channel", channelId);
+        const queueHasItems = state.queue.length > 0;
+        const shouldStartNext = state.endAction === "next" || queueHasItems;
+
+        state.endAction = "none";
         cleanupChannel(channelId);
+
+        if (shouldStartNext) {
+          playNextInQueue(ctx, channelId, options);
+        }
       },
     });
 
@@ -231,6 +310,7 @@ const startMusicStream = async (
       channelId,
       title: result.title,
       avatarUrl: "https://i.imgur.com/uVBNUK9.png",
+      bannerUrl: result.thumbnailUrl,
       producers: {
         audio: state.audioProducer,
       },
@@ -253,6 +333,20 @@ const startMusicStream = async (
   }
 };
 
+const playNextInQueue = async (
+  ctx: PluginContext,
+  channelId: number,
+  options: StartMusicStreamOptions,
+): Promise<string> => {
+  const nextItem = takeNextFromQueue(channelId);
+
+  if (!nextItem) {
+    return "Queue is empty.";
+  }
+
+  return startMusicStream(ctx, channelId, nextItem.sourceUrl, options);
+};
+
 const onLoad = async (ctx: PluginContext) => {
   startBinaryBootstrap(ctx);
 
@@ -265,6 +359,14 @@ const onLoad = async (ctx: PluginContext) => {
       description: "The bitrate for the music stream",
       type: "string",
       defaultValue: "128k",
+    },
+    {
+      key: "proxy",
+      name: "Proxy URL",
+      description:
+        "Optional proxy URL for YouTube requests (e.g. http://localhost:8080)",
+      type: "string",
+      defaultValue: "",
     },
   ]);
 
@@ -308,12 +410,16 @@ const onLoad = async (ctx: PluginContext) => {
         sourceUrl = `ytsearch:${sourceUrl}`;
       }
 
-      return startMusicStream(
-        ctx,
-        channelId,
-        sourceUrl,
-        await settings.get("bitrate"),
-      );
+      const state = getState(channelId);
+
+      if (state.streamActive || state.streamStarting) {
+        const position = enqueueSource(channelId, sourceUrl);
+        return `Added to queue (#${position}): ${formatSourceLabel(sourceUrl)}`;
+      }
+
+      const playbackSettings = await getPlaybackSettings(settings);
+
+      return startMusicStream(ctx, channelId, sourceUrl, playbackSettings);
     },
   );
 
@@ -353,12 +459,16 @@ const onLoad = async (ctx: PluginContext) => {
 
       ctx.log(`Direct URL: ${input.url} in channel ${channelId}`);
 
-      return startMusicStream(
-        ctx,
-        channelId,
-        input.url,
-        await settings.get("bitrate"),
-      );
+      const state = getState(channelId);
+
+      if (state.streamActive || state.streamStarting) {
+        const position = enqueueSource(channelId, input.url);
+        return `Added to queue (#${position}): ${formatSourceLabel(input.url)}`;
+      }
+
+      const playbackSettings = await getPlaybackSettings(settings);
+
+      return startMusicStream(ctx, channelId, input.url, playbackSettings);
     },
   );
 
@@ -381,7 +491,82 @@ const onLoad = async (ctx: PluginContext) => {
         throw new Error("No active music stream in this channel.");
       }
 
+      state.endAction = "none";
       cleanupChannel(channelId);
+    },
+  );
+
+  registerCommand(
+    "next",
+    {
+      description: "Skip current song and play the next queued item",
+      args: undefined,
+    },
+    async (invoker) => {
+      await assertStreamingBinariesReady();
+
+      const channelId = invoker.currentVoiceChannelId;
+
+      if (!channelId) {
+        throw new Error("You must be in a voice channel to skip music.");
+      }
+
+      const state = getState(channelId);
+      const playbackSettings = await getPlaybackSettings(settings);
+
+      if (state.streamStarting) {
+        throw new Error("Music is still starting. Try again in a moment.");
+      }
+
+      if (!state.streamActive) {
+        return playNextInQueue(ctx, channelId, playbackSettings);
+      }
+
+      state.endAction = "next";
+      cleanupChannel(channelId);
+
+      return "Skipping current track...";
+    },
+  );
+
+  registerCommand(
+    "clear_queue",
+    {
+      description: "Clear all queued songs for this channel",
+      args: undefined,
+    },
+    async (invoker) => {
+      const channelId = invoker.currentVoiceChannelId;
+
+      if (!channelId) {
+        throw new Error("You must be in a voice channel to clear the queue.");
+      }
+
+      const state = getState(channelId);
+      const cleared = state.queue.length;
+
+      state.queue = [];
+
+      return cleared > 0
+        ? `Cleared ${cleared} queued item(s).`
+        : "Queue is already empty.";
+    },
+  );
+
+  registerCommand(
+    "queue",
+    {
+      description: "Show the current playback queue",
+      args: undefined,
+    },
+    async (invoker) => {
+      const channelId = invoker.currentVoiceChannelId;
+
+      if (!channelId) {
+        throw new Error("You must be in a voice channel to view the queue.");
+      }
+
+      return buildQueueText(channelId);
     },
   );
 

@@ -23,6 +23,18 @@ type Commands = {
     args: undefined;
     response: string;
   };
+  next: {
+    args: undefined;
+    response: string;
+  };
+  clear_queue: {
+    args: undefined;
+    response: string;
+  };
+  queue: {
+    args: undefined;
+    response: string;
+  };
 };
 
 export type { Commands };

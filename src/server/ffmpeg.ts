@@ -1,10 +1,19 @@
-import path from "path";
 import { getFfmpegBinaryPath } from "./paths";
-import { fetchYouTubeAudio, isYouTubeUrl } from "./yt-dlp";
+import {
+  fetchYouTubeMetadata,
+  isYouTubeUrl,
+  spawnYouTubeAudioPipe,
+} from "./yt-dlp";
+
+type TSpawnedStreamProcess = {
+  ffmpeg: ReturnType<typeof Bun.spawn>;
+  ytDlp: ReturnType<typeof Bun.spawn> | null;
+};
 
 type TMusicStreamResult = {
-  process: ReturnType<typeof Bun.spawn>;
+  process: TSpawnedStreamProcess;
   title: string;
+  thumbnailUrl?: string;
 };
 
 type TMusicOptions = {
@@ -16,6 +25,7 @@ type TMusicOptions = {
 
   volume?: number; // 0-100, default 100
   bitrate?: string;
+  proxy?: string;
   log: (...messages: unknown[]) => void;
   error: (...messages: unknown[]) => void;
   debug: (...messages: unknown[]) => void;
@@ -31,25 +41,35 @@ const spawnMusicStream = async (
   let inputSource = options.sourceUrl;
   let inputArgs: string[] = [];
   let title = options.sourceUrl;
+  let thumbnailUrl: string | undefined;
+  let ytDlpProcess: ReturnType<typeof Bun.spawn> | null = null;
 
   if (isYouTubeUrl(options.sourceUrl)) {
-    const ytResult = await fetchYouTubeAudio(options.sourceUrl, {
+    options.log("Using yt-dlp -> ffmpeg pipe mode for YouTube source");
+
+    const metadata = await fetchYouTubeMetadata(options.sourceUrl, {
       log: options.log,
       error: options.error,
       debug: options.debug,
+      proxy: options.proxy,
     });
 
-    inputSource = ytResult.url;
-    title = ytResult.title;
+    title = metadata.title;
+    thumbnailUrl = metadata.thumbnailUrl;
 
-    inputArgs = [
-      "-reconnect",
-      "1",
-      "-reconnect_streamed",
-      "1",
-      "-reconnect_delay_max",
-      "5",
-    ];
+    ytDlpProcess = await spawnYouTubeAudioPipe(options.sourceUrl, {
+      log: options.log,
+      error: options.error,
+      debug: options.debug,
+      proxy: options.proxy,
+    });
+
+    if (!ytDlpProcess.stdout) {
+      throw new Error("yt-dlp pipe is not available");
+    }
+
+    inputSource = "pipe:0";
+    inputArgs = [];
   }
 
   const volumeLevel = Math.min(100, Math.max(0, options.volume ?? 100)) / 100;
@@ -118,7 +138,7 @@ const spawnMusicStream = async (
     cmd: [ffmpegPath, ...ffmpegArgs],
     stdout: "ignore",
     stderr: "pipe",
-    stdin: "ignore",
+    stdin: ytDlpProcess?.stdout ?? "ignore",
   });
 
   // stderr forwarder (with a tiny yield to prevent event-loop starvation)
@@ -153,21 +173,76 @@ const spawnMusicStream = async (
     }
   })();
 
+  // yt-dlp stderr forwarder (useful for extractor/proxy/cookie diagnostics)
+  (async () => {
+    if (!ytDlpProcess?.stderr || typeof ytDlpProcess.stderr === "number") {
+      return;
+    }
+
+    const reader = ytDlpProcess.stderr.getReader();
+    const decoder = new TextDecoder();
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+
+        if (done) break;
+
+        const text = decoder.decode(value, { stream: true });
+
+        if (text.trim()) options.error("[yt-dlp]", text.trim());
+      }
+    } catch (err) {
+      options.error("[yt-dlp stderr error]", err);
+    } finally {
+      try {
+        reader.releaseLock();
+      } catch {}
+    }
+  })();
+
+  if (ytDlpProcess) {
+    ytDlpProcess.exited.then((exitCode) => {
+      if (exitCode !== 0) {
+        options.error(`[yt-dlp] exited with code ${exitCode}`);
+      } else {
+        options.debug("[yt-dlp] stream finished");
+      }
+    });
+  }
+
   ffmpegProcess.exited.then(() => {
+    if (ytDlpProcess) {
+      try {
+        ytDlpProcess.kill("SIGTERM");
+      } catch {}
+    }
+
     options.onEnd?.();
   });
 
-  return { process: ffmpegProcess, title };
+  return {
+    process: { ffmpeg: ffmpegProcess, ytDlp: ytDlpProcess },
+    title,
+    thumbnailUrl,
+  };
 };
 
 const killMusicStream = (
-  process: ReturnType<typeof Bun.spawn> | null,
+  process: TSpawnedStreamProcess | null,
 ): void => {
   if (!process) return;
+
   try {
-    process.kill("SIGTERM");
+    process.ffmpeg.kill("SIGTERM");
   } catch {}
+
+  if (process.ytDlp) {
+    try {
+      process.ytDlp.kill("SIGTERM");
+    } catch {}
+  }
 };
 
 export { spawnMusicStream, killMusicStream };
-export type { TMusicOptions, TMusicStreamResult };
+export type { TMusicOptions, TMusicStreamResult, TSpawnedStreamProcess };
