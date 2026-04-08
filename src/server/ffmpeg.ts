@@ -14,6 +14,7 @@ type TMusicStreamResult = {
   process: TSpawnedStreamProcess;
   title: string;
   thumbnailUrl?: string;
+  durationSeconds?: number;
 };
 
 type TMusicOptions = {
@@ -42,6 +43,7 @@ const spawnMusicStream = async (
   let inputArgs: string[] = [];
   let title = options.sourceUrl;
   let thumbnailUrl: string | undefined;
+  let durationSeconds: number | undefined;
   let ytDlpProcess: ReturnType<typeof Bun.spawn> | null = null;
 
   if (isYouTubeUrl(options.sourceUrl)) {
@@ -56,6 +58,7 @@ const spawnMusicStream = async (
 
     title = metadata.title;
     thumbnailUrl = metadata.thumbnailUrl;
+    durationSeconds = metadata.durationSeconds;
 
     ytDlpProcess = await spawnYouTubeAudioPipe(options.sourceUrl, {
       log: options.log,
@@ -225,6 +228,7 @@ const spawnMusicStream = async (
     process: { ffmpeg: ffmpegProcess, ytDlp: ytDlpProcess },
     title,
     thumbnailUrl,
+    durationSeconds,
   };
 };
 

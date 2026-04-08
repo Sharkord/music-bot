@@ -2,7 +2,11 @@ import { getCookiesPath, getYtDlpBinaryPath } from "./paths";
 import { pathExists } from "./downloads";
 
 type TYtDlpResult = { url: string; title: string };
-type TYtDlpMetadataResult = { title: string; thumbnailUrl?: string };
+type TYtDlpMetadataResult = {
+  title: string;
+  thumbnailUrl?: string;
+  durationSeconds?: number;
+};
 
 type TYtDlpOptions = {
   log: (...messages: unknown[]) => void;
@@ -115,9 +119,11 @@ const parseYtDlpMetadata = (
   const parsed = JSON.parse(jsonText) as {
     title?: unknown;
     thumbnail?: unknown;
+    duration?: unknown;
     entries?: Array<{
       title?: unknown;
       thumbnail?: unknown;
+      duration?: unknown;
     }>;
   };
 
@@ -135,7 +141,12 @@ const parseYtDlpMetadata = (
       ? metadata.thumbnail.trim()
       : undefined;
 
-  return { title, thumbnailUrl };
+  const durationSeconds =
+    typeof metadata.duration === "number" && Number.isFinite(metadata.duration)
+      ? Math.max(0, Math.floor(metadata.duration))
+      : undefined;
+
+  return { title, thumbnailUrl, durationSeconds };
 };
 
 const fetchYouTubeMetadata = async (

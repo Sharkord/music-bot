@@ -1,120 +1,34 @@
 import {
-  createRegisterCommand,
-  type AppData,
-  type PlainTransport,
+  createRegisterAction,
   type PluginContext,
-  type Producer,
+  type TInvokerContext,
 } from "@sharkord/plugin-sdk";
 import type { Commands } from "../contracts/commands";
-import {
-  killMusicStream,
-  spawnMusicStream,
-  type TMusicStreamResult,
-} from "./ffmpeg";
+import type { Actions } from "../contracts/actions";
+import { killMusicStream, spawnMusicStream } from "./ffmpeg";
 import {
   areRequiredBinariesPresent,
   ensureRequiredBinaries,
 } from "./downloads";
-import { isYouTubeUrl } from "./yt-dlp";
+import {
+  clearAllChannelStates,
+  clearQueue,
+  enqueueSource,
+  formatSourceLabel,
+  getChannelIds,
+  getExistingState,
+  getPlayerStateSnapshot,
+  getState,
+  removeQueueItem,
+  takeNextFromQueue,
+} from "./player-state";
 
 let debug = false;
 let binariesReady = false;
 let binariesInitError: Error | null = null;
 
-type TQueueItem = {
-  sourceUrl: string;
-};
-
-type ChannelStreamState = {
-  ffmpegProcess: TMusicStreamResult["process"] | null;
-  audioProducer: Producer | null;
-  audioTransport: PlainTransport<AppData> | null;
-  router: any;
-  routerCloseHandler: ((...args: unknown[]) => void) | null;
-  producerCloseHandler: ((...args: unknown[]) => void) | null;
-  currentSong: string | null;
-  streamActive: boolean;
-  streamStarting: boolean;
-  volume: number;
-  queue: TQueueItem[];
-  endAction: "none" | "next";
-};
-
-const channelStreams = new Map<number, ChannelStreamState>();
-
-const getState = (channelId: number): ChannelStreamState => {
-  let state = channelStreams.get(channelId);
-
-  if (!state) {
-    state = {
-      ffmpegProcess: null,
-      audioProducer: null,
-      audioTransport: null,
-      router: null,
-      routerCloseHandler: null,
-      producerCloseHandler: null,
-      currentSong: null,
-      streamActive: false,
-      streamStarting: false,
-      volume: 50,
-      queue: [],
-      endAction: "none",
-    };
-
-    channelStreams.set(channelId, state);
-  }
-
-  return state;
-};
-
-const formatSourceLabel = (sourceUrl: string): string => {
-  if (sourceUrl.startsWith("ytsearch:")) {
-    return sourceUrl.slice("ytsearch:".length);
-  }
-
-  return sourceUrl;
-};
-
-const enqueueSource = (channelId: number, sourceUrl: string): number => {
-  const state = getState(channelId);
-  state.queue.push({ sourceUrl });
-  return state.queue.length;
-};
-
-const takeNextFromQueue = (channelId: number): TQueueItem | null => {
-  const state = getState(channelId);
-  return state.queue.shift() ?? null;
-};
-
-const buildQueueText = (channelId: number): string => {
-  const state = getState(channelId);
-
-  if (!state.streamActive && state.queue.length === 0) {
-    return "Queue is empty.";
-  }
-
-  const lines: string[] = [];
-
-  if (state.streamActive && state.currentSong) {
-    lines.push(`Now playing: ${state.currentSong}`);
-  }
-
-  if (state.queue.length === 0) {
-    lines.push("Queue: (empty)");
-    return lines.join("\n");
-  }
-
-  lines.push("Queue:");
-
-  for (const [index, item] of state.queue.entries()) {
-    lines.push(`${index + 1}. ${formatSourceLabel(item.sourceUrl)}`);
-  }
-
-  return lines.join("\n");
-};
-
 const cleanupChannel = (channelId: number) => {
-  const state = channelStreams.get(channelId);
+  const state = getExistingState(channelId);
 
   if (!state) return;
 
@@ -145,11 +59,20 @@ const cleanupChannel = (channelId: number) => {
   state.producerCloseHandler = null;
   state.streamActive = false;
   state.currentSong = null;
+  state.currentThumbnailUrl = null;
   state.streamStarting = false;
+  state.playbackStartedAtEpochMs = null;
+  state.currentTrackDurationSeconds = null;
 };
 
 const forceClean = () => {
-  for (const channelId of channelStreams.keys()) {
+  for (const channelId of getChannelIds()) {
+    const state = getExistingState(channelId);
+
+    if (state) {
+      state.endAction = "stop";
+    }
+
     cleanupChannel(channelId);
   }
 
@@ -157,7 +80,7 @@ const forceClean = () => {
     Bun.spawnSync({ cmd: ["killall", "ffmpeg"] });
   } catch {}
 
-  channelStreams.clear();
+  clearAllChannelStates();
 };
 
 const startBinaryBootstrap = (ctx: PluginContext): void => {
@@ -197,6 +120,11 @@ type StartMusicStreamOptions = {
   proxy?: string;
 };
 
+type ControlPermissions = {
+  roleId: number;
+  hideButtonWhenNoPermission: boolean;
+};
+
 const getPlaybackSettings = async (
   settings: Awaited<ReturnType<PluginContext["settings"]["register"]>>,
 ): Promise<StartMusicStreamOptions> => {
@@ -206,6 +134,173 @@ const getPlaybackSettings = async (
   ]);
 
   return { bitrate, proxy };
+};
+
+const getControlPermissions = async (
+  settings: Awaited<ReturnType<PluginContext["settings"]["register"]>>,
+): Promise<ControlPermissions> => {
+  const [roleId, hideButtonWhenNoPermission] = await Promise.all([
+    settings.get("roleId"),
+    settings.get("hideButtonWhenNoPermission"),
+  ]);
+
+  return {
+    roleId: Number(roleId),
+    hideButtonWhenNoPermission: Boolean(hideButtonWhenNoPermission),
+  };
+};
+
+const getInvokerRoleIds = async (
+  ctx: PluginContext,
+  userId: number,
+): Promise<number[]> => {
+  try {
+    const user = (await ctx.data.getUser(userId)) as {
+      roleIds: number[];
+    };
+
+    return user.roleIds;
+  } catch {
+    return [];
+  }
+};
+
+const assertCanControlMusic = async (
+  ctx: PluginContext,
+  invoker: TInvokerContext,
+  settings: Awaited<ReturnType<PluginContext["settings"]["register"]>>,
+): Promise<void> => {
+  const { roleId } = await getControlPermissions(settings);
+
+  if (roleId === -1) {
+    return;
+  }
+
+  const roleIds = await getInvokerRoleIds(ctx, invoker.userId);
+
+  if (!roleIds.includes(roleId)) {
+    throw new Error("You don't have permission to control the music bot.");
+  }
+};
+
+const requireVoiceChannelId = (
+  channelId: number | null | undefined,
+  errorMessage: string,
+): number => {
+  if (!channelId) {
+    throw new Error(errorMessage);
+  }
+
+  return channelId;
+};
+
+const getRequiredText = (value: string | undefined, errorMessage: string) => {
+  const trimmedValue = value?.trim();
+
+  if (!trimmedValue) {
+    throw new Error(errorMessage);
+  }
+
+  return trimmedValue;
+};
+
+const normalizePlayableSource = (query: string): string => {
+  if (!/^https?:\/\//.test(query)) {
+    return `ytsearch:${query}`;
+  }
+
+  return query;
+};
+
+const addSourceToQueue = (channelId: number, sourceUrl: string): string => {
+  const position = enqueueSource(channelId, sourceUrl);
+
+  return `Added to queue (#${position}): ${formatSourceLabel(sourceUrl)}`;
+};
+
+const buildActionResult = (message: string, channelId?: number | null) => ({
+  message,
+  player: getPlayerStateSnapshot(channelId),
+});
+
+const removeQueuedSource = (channelId: number, position: number): string => {
+  const removedItem = removeQueueItem(channelId, position);
+
+  if (!removedItem) {
+    throw new Error("Queue item not found.");
+  }
+
+  return `Removed from queue: ${formatSourceLabel(removedItem.sourceUrl)}`;
+};
+
+const playQueuedSourceImmediately = async (
+  ctx: PluginContext,
+  channelId: number,
+  position: number,
+  settings: Awaited<ReturnType<PluginContext["settings"]["register"]>>,
+): Promise<string> => {
+  const state = getState(channelId);
+  const selectedItem = removeQueueItem(channelId, position);
+
+  if (!selectedItem) {
+    throw new Error("Queue item not found.");
+  }
+
+  const playbackSettings = await getPlaybackSettings(settings);
+
+  if (!state.streamActive) {
+    return startMusicStream(
+      ctx,
+      channelId,
+      selectedItem.sourceUrl,
+      playbackSettings,
+    );
+  }
+
+  state.queue.unshift(selectedItem);
+  state.endAction = "next";
+  cleanupChannel(channelId);
+
+  return `Jumping to: ${formatSourceLabel(selectedItem.sourceUrl)}`;
+};
+
+const skipToNextTrack = async (
+  ctx: PluginContext,
+  channelId: number,
+  settings: Awaited<ReturnType<PluginContext["settings"]["register"]>>,
+): Promise<string> => {
+  const state = getState(channelId);
+  const playbackSettings = await getPlaybackSettings(settings);
+
+  if (state.streamStarting) {
+    throw new Error("Music is still starting. Try again in a moment.");
+  }
+
+  if (!state.streamActive) {
+    return playNextInQueue(ctx, channelId, playbackSettings);
+  }
+
+  state.endAction = "next";
+  cleanupChannel(channelId);
+
+  return "Skipping current track...";
+};
+
+const playOrQueueSource = async (
+  ctx: PluginContext,
+  channelId: number,
+  sourceUrl: string,
+  settings: Awaited<ReturnType<PluginContext["settings"]["register"]>>,
+) => {
+  const state = getState(channelId);
+
+  if (state.streamActive || state.streamStarting) {
+    return addSourceToQueue(channelId, sourceUrl);
+  }
+
+  const playbackSettings = await getPlaybackSettings(settings);
+
+  return startMusicStream(ctx, channelId, sourceUrl, playbackSettings);
 };
 
 const startMusicStream = async (
@@ -294,7 +389,9 @@ const startMusicStream = async (
       onEnd: () => {
         ctx.log("Music ended in channel", channelId);
         const queueHasItems = state.queue.length > 0;
-        const shouldStartNext = state.endAction === "next" || queueHasItems;
+        const shouldStartNext =
+          state.endAction === "next" ||
+          (state.endAction !== "stop" && queueHasItems);
 
         state.endAction = "none";
         cleanupChannel(channelId);
@@ -322,7 +419,11 @@ const startMusicStream = async (
 
     state.ffmpegProcess = result.process;
     state.currentSong = result.title;
+    state.currentThumbnailUrl = result.thumbnailUrl ?? null;
+    state.playbackStartedAtEpochMs = Date.now();
+    state.currentTrackDurationSeconds = result.durationSeconds ?? null;
     state.streamActive = true;
+    state.endAction = "none";
 
     return `Now playing: ${result.title}`;
   } catch (err) {
@@ -352,6 +453,8 @@ const onLoad = async (ctx: PluginContext) => {
 
   ctx.log("Music Bot loaded");
 
+  ctx.ui.enable();
+
   const settings = await ctx.settings.register([
     {
       key: "bitrate",
@@ -368,278 +471,178 @@ const onLoad = async (ctx: PluginContext) => {
       type: "string",
       defaultValue: "",
     },
+    {
+      key: "roleId",
+      name: "Role ID",
+      description:
+        "Control which role can control the music bot. If set to -1, everyone can control it.",
+      type: "number",
+      defaultValue: -1,
+    },
+    {
+      key: "hideButtonWhenNoPermission",
+      name: "Hide Player For Non-Permitted Users",
+      description:
+        "When enabled and roleId is set, users without permission to control the bot won't see the player button. If disabled, the player button will be visible but non-permitted users won't be able to interact with it.",
+      type: "boolean",
+      defaultValue: false,
+    },
   ]);
 
   ctx.events.on("voice:runtime_closed", ({ channelId }) => {
+    const state = getExistingState(channelId);
+
+    if (state) {
+      state.endAction = "stop";
+    }
+
     cleanupChannel(channelId);
   });
 
-  const registerCommand = createRegisterCommand<Commands>(ctx);
+  const registerAction = createRegisterAction<Actions>(ctx);
 
-  registerCommand(
-    "play",
-    {
-      description: "Play music from YouTube",
-      args: [
-        {
-          name: "query",
-          description: "YouTube URL, search query, or direct audio URL",
-          type: "string",
-          required: true,
-        },
-      ],
-    },
-    async (invoker, input) => {
-      await assertStreamingBinariesReady();
+  registerAction("getPlayerState", async (invoker) => {
+    return getPlayerStateSnapshot(invoker.currentVoiceChannelId);
+  });
 
-      const channelId = invoker.currentVoiceChannelId;
+  registerAction("cleanChannel", async (invoker) => {
+    await assertCanControlMusic(ctx, invoker, settings);
 
-      if (!channelId) {
-        throw new Error("You must be in a voice channel to play music.");
-      }
+    const channelId = requireVoiceChannelId(
+      invoker.currentVoiceChannelId,
+      "You must be in a voice channel to clean playback state.",
+    );
+    const state = getExistingState(channelId);
 
-      if (!input.query) {
-        throw new Error("You must provide a search query or URL.");
-      }
+    if (state) {
+      state.endAction = "stop";
+    }
 
-      ctx.log(`Query: ${input.query} in channel ${channelId}`);
+    cleanupChannel(channelId);
 
-      let sourceUrl = input.query;
+    return buildActionResult(
+      "Cleaned playback state for this channel.",
+      channelId,
+    );
+  });
 
-      if (!/^https?:\/\//.test(sourceUrl)) {
-        sourceUrl = `ytsearch:${sourceUrl}`;
-      }
+  registerAction("playMusic", async (invoker, payload) => {
+    await assertStreamingBinariesReady();
+    await assertCanControlMusic(ctx, invoker, settings);
 
-      const state = getState(channelId);
+    const channelId = requireVoiceChannelId(
+      invoker.currentVoiceChannelId,
+      "You must be in a voice channel to play music.",
+    );
+    const query = getRequiredText(
+      payload.query,
+      "You must provide a search query or URL.",
+    );
+    const sourceUrl = normalizePlayableSource(query);
+    const message = await playOrQueueSource(
+      ctx,
+      channelId,
+      sourceUrl,
+      settings,
+    );
 
-      if (state.streamActive || state.streamStarting) {
-        const position = enqueueSource(channelId, sourceUrl);
-        return `Added to queue (#${position}): ${formatSourceLabel(sourceUrl)}`;
-      }
+    return buildActionResult(message, channelId);
+  });
 
-      const playbackSettings = await getPlaybackSettings(settings);
+  registerAction("queueMusic", async (invoker, payload) => {
+    await assertStreamingBinariesReady();
+    await assertCanControlMusic(ctx, invoker, settings);
 
-      return startMusicStream(ctx, channelId, sourceUrl, playbackSettings);
-    },
-  );
+    const channelId = requireVoiceChannelId(
+      invoker.currentVoiceChannelId,
+      "You must be in a voice channel to queue music.",
+    );
+    const query = getRequiredText(
+      payload.query,
+      "You must provide a search query or URL.",
+    );
+    const sourceUrl = normalizePlayableSource(query);
+    const message = addSourceToQueue(channelId, sourceUrl);
 
-  registerCommand(
-    "play_direct",
-    {
-      description: "Play music from a direct URL (e.g. MP3 file)",
-      args: [
-        {
-          name: "url",
-          description: "Direct MP3 URL",
-          type: "string",
-          required: true,
-        },
-      ],
-    },
-    async (invoker, input) => {
-      await assertStreamingBinariesReady();
+    return buildActionResult(message, channelId);
+  });
 
-      const channelId = invoker.currentVoiceChannelId;
+  registerAction("removeQueueItem", async (invoker, payload) => {
+    await assertCanControlMusic(ctx, invoker, settings);
 
-      if (!channelId) {
-        throw new Error("You must be in a voice channel to play music.");
-      }
+    const channelId = requireVoiceChannelId(
+      invoker.currentVoiceChannelId,
+      "You must be in a voice channel to edit the queue.",
+    );
+    const message = removeQueuedSource(channelId, payload.position);
 
-      if (!input.url) {
-        throw new Error("You must provide a direct audio URL.");
-      }
+    return buildActionResult(message, channelId);
+  });
 
-      if (!/^https?:\/\//.test(input.url)) {
-        throw new Error("You must provide a direct http(s) URL.");
-      }
+  registerAction("nextMusic", async (invoker) => {
+    await assertStreamingBinariesReady();
+    await assertCanControlMusic(ctx, invoker, settings);
 
-      if (isYouTubeUrl(input.url)) {
-        throw new Error("YouTube URLs are not supported by /play_direct.");
-      }
+    const channelId = requireVoiceChannelId(
+      invoker.currentVoiceChannelId,
+      "You must be in a voice channel to skip music.",
+    );
+    const message = await skipToNextTrack(ctx, channelId, settings);
 
-      ctx.log(`Direct URL: ${input.url} in channel ${channelId}`);
+    return buildActionResult(message, channelId);
+  });
 
-      const state = getState(channelId);
+  registerAction("jumpToQueueItem", async (invoker, payload) => {
+    await assertStreamingBinariesReady();
+    await assertCanControlMusic(ctx, invoker, settings);
 
-      if (state.streamActive || state.streamStarting) {
-        const position = enqueueSource(channelId, input.url);
-        return `Added to queue (#${position}): ${formatSourceLabel(input.url)}`;
-      }
+    const channelId = requireVoiceChannelId(
+      invoker.currentVoiceChannelId,
+      "You must be in a voice channel to control the queue.",
+    );
+    const message = await playQueuedSourceImmediately(
+      ctx,
+      channelId,
+      payload.position,
+      settings,
+    );
 
-      const playbackSettings = await getPlaybackSettings(settings);
+    return buildActionResult(message, channelId);
+  });
 
-      return startMusicStream(ctx, channelId, input.url, playbackSettings);
-    },
-  );
+  registerAction("stopMusic", async (invoker) => {
+    await assertCanControlMusic(ctx, invoker, settings);
 
-  registerCommand(
-    "stop",
-    {
-      description: "Stop the music stream in the current channel",
-      args: undefined,
-    },
-    async (invoker) => {
-      const channelId = invoker.currentVoiceChannelId;
+    const channelId = requireVoiceChannelId(
+      invoker.currentVoiceChannelId,
+      "You must be in a voice channel to stop music.",
+    );
+    const state = getExistingState(channelId);
 
-      if (!channelId) {
-        throw new Error("You must be in a voice channel to stop music.");
-      }
+    if (!state || !state.streamActive) {
+      return buildActionResult(
+        "No active music stream in this channel.",
+        channelId,
+      );
+    }
 
-      const state = channelStreams.get(channelId);
+    state.endAction = "stop";
+    cleanupChannel(channelId);
 
-      if (!state || !state.streamActive) {
-        throw new Error("No active music stream in this channel.");
-      }
+    return buildActionResult("Stopped music.", channelId);
+  });
 
-      state.endAction = "none";
-      cleanupChannel(channelId);
-    },
-  );
-
-  registerCommand(
-    "next",
-    {
-      description: "Skip current song and play the next queued item",
-      args: undefined,
-    },
-    async (invoker) => {
-      await assertStreamingBinariesReady();
-
-      const channelId = invoker.currentVoiceChannelId;
-
-      if (!channelId) {
-        throw new Error("You must be in a voice channel to skip music.");
-      }
-
-      const state = getState(channelId);
-      const playbackSettings = await getPlaybackSettings(settings);
-
-      if (state.streamStarting) {
-        throw new Error("Music is still starting. Try again in a moment.");
-      }
-
-      if (!state.streamActive) {
-        return playNextInQueue(ctx, channelId, playbackSettings);
-      }
-
-      state.endAction = "next";
-      cleanupChannel(channelId);
-
-      return "Skipping current track...";
-    },
-  );
-
-  registerCommand(
-    "clear_queue",
-    {
-      description: "Clear all queued songs for this channel",
-      args: undefined,
-    },
-    async (invoker) => {
-      const channelId = invoker.currentVoiceChannelId;
-
-      if (!channelId) {
-        throw new Error("You must be in a voice channel to clear the queue.");
-      }
-
-      const state = getState(channelId);
-      const cleared = state.queue.length;
-
-      state.queue = [];
-
-      return cleared > 0
-        ? `Cleared ${cleared} queued item(s).`
-        : "Queue is already empty.";
-    },
-  );
-
-  registerCommand(
-    "queue",
-    {
-      description: "Show the current playback queue",
-      args: undefined,
-    },
-    async (invoker) => {
-      const channelId = invoker.currentVoiceChannelId;
-
-      if (!channelId) {
-        throw new Error("You must be in a voice channel to view the queue.");
-      }
-
-      return buildQueueText(channelId);
-    },
-  );
-
-  registerCommand(
-    "music_clean",
-    {
-      description:
-        "Force clean all music streams (use if something gets stuck)",
-      args: undefined,
-    },
-    async () => {
-      forceClean();
-    },
-  );
-
-  registerCommand(
-    "volume",
-    {
-      description: "Set the music stream volume (0-100)",
-      args: [
-        {
-          name: "volume",
-          description: "Volume percentage (0-100)",
-          type: "number",
-          required: true,
-        },
-      ],
-    },
-    async (invoker, input) => {
-      const channelId = invoker.currentVoiceChannelId;
-
-      if (!channelId) throw new Error("You are not in a voice channel");
-
-      if (input.volume < 0 || input.volume > 100) {
-        throw new Error("Volume must be between 0 and 100");
-      }
-
-      const state = getState(channelId);
-
-      state.volume = input.volume;
-
-      return `Volume set to ${input.volume}% (applies to next song)`;
-    },
-  );
-
-  registerCommand(
-    "now_playing",
-    {
-      description: "Show the currently playing song in this channel",
-      args: undefined,
-    },
-    async (invoker) => {
-      const channelId = invoker.currentVoiceChannelId;
-
-      if (!channelId) throw new Error("You are not in a voice channel");
-
-      const state = channelStreams.get(channelId);
-
-      if (!state || !state.streamActive || !state.currentSong) {
-        return "No music is currently playing in this channel.";
-      }
-
-      return `Now playing: ${state.currentSong}`;
-    },
-  );
+  registerAction("getControlPermissions", async () => {
+    return getControlPermissions(settings);
+  });
 };
 
 const onUnload = (ctx: PluginContext) => {
-  for (const channelId of channelStreams.keys()) {
+  for (const channelId of getChannelIds()) {
     cleanupChannel(channelId);
   }
 
-  channelStreams.clear();
+  clearAllChannelStates();
 
   ctx.log("Music Bot unloaded");
 };
