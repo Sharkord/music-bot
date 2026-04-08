@@ -108,6 +108,8 @@ const spawnMusicStream = async (
 
     ...inputArgs,
     "-re",
+    "-readrate_initial_burst",
+    "0",
     "-i",
     inputSource,
 
@@ -232,9 +234,7 @@ const spawnMusicStream = async (
   };
 };
 
-const killMusicStream = (
-  process: TSpawnedStreamProcess | null,
-): void => {
+const killMusicStream = (process: TSpawnedStreamProcess | null): void => {
   if (!process) return;
 
   try {
