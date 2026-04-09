@@ -1,8 +1,4 @@
-import type {
-  AppData,
-  PlainTransport,
-  Producer,
-} from "@sharkord/plugin-sdk";
+import type { AppData, PlainTransport, Producer } from "@sharkord/plugin-sdk";
 import type {
   PlayerQueueEntry,
   PlayerStateSnapshot,
@@ -11,6 +7,7 @@ import type { TMusicStreamResult } from "./ffmpeg";
 
 type TQueueItem = {
   sourceUrl: string;
+  invokerUserId: number;
 };
 
 type ChannelStreamState = {
@@ -21,6 +18,7 @@ type ChannelStreamState = {
   routerCloseHandler: ((...args: unknown[]) => void) | null;
   producerCloseHandler: ((...args: unknown[]) => void) | null;
   currentSong: string | null;
+  currentInvokerUserId: number | null;
   currentThumbnailUrl: string | null;
   streamActive: boolean;
   streamStarting: boolean;
@@ -41,6 +39,7 @@ const createInitialState = (): ChannelStreamState => ({
   routerCloseHandler: null,
   producerCloseHandler: null,
   currentSong: null,
+  currentInvokerUserId: null,
   currentThumbnailUrl: null,
   streamActive: false,
   streamStarting: false,
@@ -73,9 +72,13 @@ const formatSourceLabel = (sourceUrl: string): string => {
   return sourceUrl;
 };
 
-const enqueueSource = (channelId: number, sourceUrl: string): number => {
+const enqueueSource = (
+  channelId: number,
+  sourceUrl: string,
+  invokerUserId: number,
+): number => {
   const state = getState(channelId);
-  state.queue.push({ sourceUrl });
+  state.queue.push({ sourceUrl, invokerUserId });
   return state.queue.length;
 };
 
@@ -100,7 +103,11 @@ const removeQueueItem = (
   const state = getState(channelId);
   const queueIndex = position - 1;
 
-  if (!Number.isInteger(position) || queueIndex < 0 || queueIndex >= state.queue.length) {
+  if (
+    !Number.isInteger(position) ||
+    queueIndex < 0 ||
+    queueIndex >= state.queue.length
+  ) {
     return null;
   }
 
@@ -140,10 +147,12 @@ const buildQueueEntries = (state: ChannelStreamState): PlayerQueueEntry[] =>
   state.queue.map((item, index) => ({
     position: index + 1,
     label: formatSourceLabel(item.sourceUrl),
+    invokerUserId: item.invokerUserId,
   }));
 
 const emptyPlayerStateSnapshot = (): PlayerStateSnapshot => ({
   currentSong: null,
+  currentInvokerUserId: null,
   currentThumbnailUrl: null,
   streamActive: false,
   streamStarting: false,
@@ -165,14 +174,17 @@ const getPlayerStateSnapshot = (
 
   return {
     currentSong: state.currentSong,
+    currentInvokerUserId: state.currentInvokerUserId,
     currentThumbnailUrl: state.currentThumbnailUrl,
     streamActive: state.streamActive,
     streamStarting: state.streamStarting,
     playbackStartedAtEpochMs: state.playbackStartedAtEpochMs,
     currentTrackDurationSeconds: state.currentTrackDurationSeconds,
     currentTrackEndsAtEpochMs:
-      state.playbackStartedAtEpochMs !== null && state.currentTrackDurationSeconds !== null
-        ? state.playbackStartedAtEpochMs + state.currentTrackDurationSeconds * 1000
+      state.playbackStartedAtEpochMs !== null &&
+      state.currentTrackDurationSeconds !== null
+        ? state.playbackStartedAtEpochMs +
+          state.currentTrackDurationSeconds * 1000
         : null,
     queue: buildQueueEntries(state),
     queueText: buildQueueText(channelId),

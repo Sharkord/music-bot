@@ -89,6 +89,7 @@ const Player = memo(({ canControl }: TPlayerProps) => {
             {playerState.streamActive ? (
               <PlayerCurrentTrack
                 currentSong={playerState.currentSong}
+                currentInvokerUserId={playerState.currentInvokerUserId}
                 thumbnailUrl={playerState.currentThumbnailUrl}
                 durationSeconds={playerState.currentTrackDurationSeconds}
                 elapsedSeconds={playback.clampedElapsedSeconds}

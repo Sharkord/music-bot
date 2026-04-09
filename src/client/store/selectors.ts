@@ -1,5 +1,6 @@
 import { createSelector } from "reselect";
 import type { SharkordState } from ".";
+import { createCachedSelector } from "re-reselect";
 
 export const currentVoiceChannelIdSelector = (state: SharkordState) =>
   state.currentVoiceChannelId;
@@ -20,3 +21,9 @@ export const ownUserRolesSelector = createSelector(
     return roles.filter((role) => user.roleIds.includes(role.id));
   },
 );
+
+export const userByIdSelector = createCachedSelector(
+  usersSelector,
+  (_: SharkordState, userId: number) => userId,
+  (users, userId) => users.find((u) => u.id === userId),
+)((_, userId) => userId);

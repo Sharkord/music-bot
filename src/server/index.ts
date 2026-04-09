@@ -59,6 +59,7 @@ const cleanupChannel = (channelId: number) => {
   state.producerCloseHandler = null;
   state.streamActive = false;
   state.currentSong = null;
+  state.currentInvokerUserId = null;
   state.currentThumbnailUrl = null;
   state.streamStarting = false;
   state.playbackStartedAtEpochMs = null;
@@ -212,8 +213,12 @@ const normalizePlayableSource = (query: string): string => {
   return query;
 };
 
-const addSourceToQueue = (channelId: number, sourceUrl: string): string => {
-  const position = enqueueSource(channelId, sourceUrl);
+const addSourceToQueue = (
+  channelId: number,
+  sourceUrl: string,
+  invokerUserId: number,
+): string => {
+  const position = enqueueSource(channelId, sourceUrl, invokerUserId);
 
   return `Added to queue (#${position}): ${formatSourceLabel(sourceUrl)}`;
 };
@@ -254,6 +259,7 @@ const playQueuedSourceImmediately = async (
       channelId,
       selectedItem.sourceUrl,
       playbackSettings,
+      selectedItem.invokerUserId,
     );
   }
 
@@ -291,16 +297,23 @@ const playOrQueueSource = async (
   channelId: number,
   sourceUrl: string,
   settings: Awaited<ReturnType<PluginContext["settings"]["register"]>>,
+  invokerUserId: number,
 ) => {
   const state = getState(channelId);
 
   if (state.streamActive || state.streamStarting) {
-    return addSourceToQueue(channelId, sourceUrl);
+    return addSourceToQueue(channelId, sourceUrl, invokerUserId);
   }
 
   const playbackSettings = await getPlaybackSettings(settings);
 
-  return startMusicStream(ctx, channelId, sourceUrl, playbackSettings);
+  return startMusicStream(
+    ctx,
+    channelId,
+    sourceUrl,
+    playbackSettings,
+    invokerUserId,
+  );
 };
 
 const startMusicStream = async (
@@ -308,6 +321,7 @@ const startMusicStream = async (
   channelId: number,
   sourceUrl: string,
   options: StartMusicStreamOptions,
+  invokerUserId: number,
 ) => {
   const state = getState(channelId);
 
@@ -419,6 +433,7 @@ const startMusicStream = async (
 
     state.ffmpegProcess = result.process;
     state.currentSong = result.title;
+    state.currentInvokerUserId = invokerUserId;
     state.currentThumbnailUrl = result.thumbnailUrl ?? null;
     state.playbackStartedAtEpochMs = Date.now();
     state.currentTrackDurationSeconds = result.durationSeconds ?? null;
@@ -445,7 +460,13 @@ const playNextInQueue = async (
     return "Queue is empty.";
   }
 
-  return startMusicStream(ctx, channelId, nextItem.sourceUrl, options);
+  return startMusicStream(
+    ctx,
+    channelId,
+    nextItem.sourceUrl,
+    options,
+    nextItem.invokerUserId,
+  );
 };
 
 const onLoad = async (ctx: PluginContext) => {
@@ -544,6 +565,7 @@ const onLoad = async (ctx: PluginContext) => {
       channelId,
       sourceUrl,
       settings,
+      invoker.userId,
     );
 
     return buildActionResult(message, channelId);
@@ -562,7 +584,7 @@ const onLoad = async (ctx: PluginContext) => {
       "You must provide a search query or URL.",
     );
     const sourceUrl = normalizePlayableSource(query);
-    const message = addSourceToQueue(channelId, sourceUrl);
+    const message = addSourceToQueue(channelId, sourceUrl, invoker.userId);
 
     return buildActionResult(message, channelId);
   });

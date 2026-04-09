@@ -2,6 +2,7 @@ import type { PlayerStateSnapshot } from "../../contracts/actions";
 
 const EMPTY_PLAYER_STATE: PlayerStateSnapshot = {
   currentSong: null,
+  currentInvokerUserId: null,
   currentThumbnailUrl: null,
   streamActive: false,
   streamStarting: false,

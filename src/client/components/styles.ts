@@ -135,6 +135,12 @@ const currentTrackTitleStyle: CSSProperties = {
   overflowWrap: "anywhere",
 };
 
+const currentTrackInvokerStyle: CSSProperties = {
+  fontSize: 12,
+  lineHeight: 1.3,
+  opacity: 0.74,
+};
+
 const progressTrackStyle: CSSProperties = {
   position: "relative",
   height: 7,
@@ -218,6 +224,13 @@ const queueItemLabelStyle: CSSProperties = {
   overflowWrap: "anywhere",
 };
 
+const queueItemMetaStyle: CSSProperties = {
+  marginTop: 2,
+  fontSize: 11,
+  lineHeight: 1.25,
+  opacity: 0.68,
+};
+
 const queueSectionBodyStyle: CSSProperties = {
   display: "grid",
   gridTemplateRows: "auto 1fr",
@@ -246,6 +259,7 @@ export {
   currentTrackLabelStyle,
   currentTrackLayoutStyle,
   currentTrackTitleStyle,
+  currentTrackInvokerStyle,
   emptyStateStyle,
   helperTextStyle,
   messageStyle,
@@ -257,6 +271,7 @@ export {
   queueItemActionStyle,
   queueItemIndexStyle,
   queueItemLabelStyle,
+  queueItemMetaStyle,
   queueItemStyle,
   queueListStyle,
   queueSectionBodyStyle,

@@ -3,9 +3,9 @@ import type { PlayerQueueEntry } from "../../contracts/actions";
 import {
   emptyStateStyle,
   helperTextStyle,
-  queueItemActionStyle,
   queueItemIndexStyle,
   queueItemLabelStyle,
+  queueItemMetaStyle,
   queueItemStyle,
   queueListStyle,
   sectionHeaderStyle,
@@ -13,6 +13,7 @@ import {
   sectionTitleStyle,
 } from "./styles";
 import { PlayIcon, XIcon } from "./icons";
+import { useUserById } from "../store/hooks";
 
 type PlayerQueueProps = {
   isBusy: boolean;
@@ -22,6 +23,50 @@ type PlayerQueueProps = {
   queue: PlayerQueueEntry[];
   queueText: string;
   canControl: boolean;
+};
+
+type QueueItemProps = {
+  isBusy: boolean;
+  isDisconnected: boolean;
+  canControl: boolean;
+  item: PlayerQueueEntry;
+  onJumpToQueueItem: (position: number) => Promise<void>;
+  onRemoveQueueItem: (position: number) => Promise<void>;
+};
+
+const QueueItem = ({
+  isBusy,
+  isDisconnected,
+  canControl,
+  item,
+  onJumpToQueueItem,
+  onRemoveQueueItem,
+}: QueueItemProps) => {
+  const invoker = useUserById(item.invokerUserId);
+
+  return (
+    <li key={`${item.position}-${item.label}`} style={queueItemStyle}>
+      <span style={queueItemIndexStyle}>{item.position}.</span>
+      <div style={queueItemLabelStyle}>
+        <div>{item.label}</div>
+        <div style={queueItemMetaStyle}>Added by {invoker?.name}</div>
+      </div>
+      <IconButton
+        icon={PlayIcon}
+        variant="ghost"
+        size="sm"
+        onClick={() => onJumpToQueueItem(item.position)}
+        disabled={isDisconnected || isBusy || !canControl}
+      />
+      <IconButton
+        icon={XIcon}
+        variant="ghost"
+        size="sm"
+        onClick={() => onRemoveQueueItem(item.position)}
+        disabled={isDisconnected || isBusy || !canControl}
+      />
+    </li>
+  );
 };
 
 const PlayerQueue = ({
@@ -48,24 +93,15 @@ const PlayerQueue = ({
     ) : (
       <ol style={queueListStyle}>
         {queue.map((item) => (
-          <li key={`${item.position}-${item.label}`} style={queueItemStyle}>
-            <span style={queueItemIndexStyle}>{item.position}.</span>
-            <span style={queueItemLabelStyle}>{item.label}</span>
-            <IconButton
-              icon={PlayIcon}
-              variant="ghost"
-              size="sm"
-              onClick={() => onJumpToQueueItem(item.position)}
-              disabled={isDisconnected || isBusy || !canControl}
-            />
-            <IconButton
-              icon={XIcon}
-              variant="ghost"
-              size="sm"
-              onClick={() => onRemoveQueueItem(item.position)}
-              disabled={isDisconnected || isBusy || !canControl}
-            />
-          </li>
+          <QueueItem
+            key={`${item.position}-${item.label}`}
+            canControl={canControl}
+            isBusy={isBusy}
+            isDisconnected={isDisconnected}
+            item={item}
+            onJumpToQueueItem={onJumpToQueueItem}
+            onRemoveQueueItem={onRemoveQueueItem}
+          />
         ))}
       </ol>
     )}

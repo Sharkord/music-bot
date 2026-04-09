@@ -1,10 +1,12 @@
 type PlayerQueueEntry = {
   position: number;
   label: string;
+  invokerUserId: number;
 };
 
 type PlayerStateSnapshot = {
   currentSong: string | null;
+  currentInvokerUserId: number | null;
   currentThumbnailUrl: string | null;
   streamActive: boolean;
   streamStarting: boolean;
