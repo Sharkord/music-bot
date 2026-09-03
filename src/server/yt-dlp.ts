@@ -32,6 +32,31 @@ const terminateYtDlp = (process: ReturnType<typeof Bun.spawn>): void => {
   }, YT_DLP_FORCE_KILL_TIMEOUT_MS);
 };
 
+const logYtDlpLine = (line: string, options: TYtDlpOptions): void => {
+  if (line.startsWith("ERROR:")) {
+    options.error("[yt-dlp]", line);
+
+    return;
+  }
+
+  if (line.startsWith("WARNING:")) {
+    options.log("[yt-dlp]", line);
+
+    return;
+  }
+
+  options.debug("[yt-dlp]", line);
+};
+
+/** progress rewrites the line with \r, so both terminators split output */
+const logYtDlpOutput = (text: string, options: TYtDlpOptions): void => {
+  for (const line of text.split(/\r\n|[\n\r]/)) {
+    const trimmedLine = line.trim();
+
+    if (trimmedLine) logYtDlpLine(trimmedLine, options);
+  }
+};
+
 const isYouTubeUrl = (url: string): boolean =>
   url.includes("youtube.com") ||
   url.includes("youtu.be") ||
@@ -111,7 +136,7 @@ const runYtDlp = async (
       timeoutPromise,
     ]);
 
-    if (stderr.trim()) options.error("[yt-dlp]", stderr.trim());
+    logYtDlpOutput(stderr, options);
 
     options.log(`[yt-dlp] ${label} finished with exit code ${exitCode}`);
 
@@ -270,7 +295,8 @@ const spawnYouTubeAudioPipe = async (
 export {
   fetchYouTubeAudio,
   fetchYouTubeMetadata,
-  spawnYouTubeAudioPipe,
   isYouTubeUrl,
+  logYtDlpLine,
+  spawnYouTubeAudioPipe,
 };
 export type { TYtDlpResult, TYtDlpMetadataResult, TYtDlpOptions };
