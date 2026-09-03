@@ -5,6 +5,6 @@
   "description": "Allows users to stream music to voice channels.",
   "homepage": "https://github.com/Sharkord/music-bot",
   "logo": "https://i.imgur.com/uVBNUK9.png",
-  "sdkVersion": 1,
-  "version": "0.0.2"
+  "sdkVersion": 2,
+  "version": "0.0.3"
 }

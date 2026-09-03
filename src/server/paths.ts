@@ -1,11 +1,16 @@
 import path from "path";
-import { dirname } from "path";
-import { fileURLToPath } from "url";
 
-const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
-const BIN_DIR = path.join(SERVER_DIR, "bin");
+let dataDir = "";
 
-const getBinaryPath = (name: string): string => path.join(BIN_DIR, name);
+const setDataDir = (value: string): void => {
+  dataDir = value;
+};
+
+const getBinDir = (): string => path.join(dataDir, "bin");
+
+const getDownloadDir = (): string => path.join(dataDir, "downloads");
+
+const getBinaryPath = (name: string): string => path.join(getBinDir(), name);
 
 const getFfmpegBinaryPath = (): string =>
   getBinaryPath(process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg");
@@ -13,13 +18,14 @@ const getFfmpegBinaryPath = (): string =>
 const getYtDlpBinaryPath = (): string =>
   getBinaryPath(process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp");
 
-const getCookiesPath = (): string => path.join(BIN_DIR, "cookies.txt");
+const getCookiesPath = (): string => path.join(getBinDir(), "cookies.txt");
 
 export {
-  BIN_DIR,
-  SERVER_DIR,
+  getBinDir,
   getBinaryPath,
   getCookiesPath,
+  getDownloadDir,
   getFfmpegBinaryPath,
   getYtDlpBinaryPath,
+  setDataDir,
 };

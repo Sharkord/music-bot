@@ -1,8 +1,11 @@
-import type { AppData, PlainTransport, Producer } from "@sharkord/plugin-sdk";
 import type {
-  PlayerQueueEntry,
-  PlayerStateSnapshot,
-} from "../contracts/actions";
+  AppData,
+  PlainTransport,
+  Producer,
+  Router,
+  TExternalStreamHandle,
+} from "@sharkord/plugin-sdk";
+import type { PlayerQueueEntry, PlayerStateSnapshot } from "../contract";
 import type { TMusicStreamResult } from "./ffmpeg";
 
 type TQueueItem = {
@@ -14,7 +17,8 @@ type ChannelStreamState = {
   ffmpegProcess: TMusicStreamResult["process"] | null;
   audioProducer: Producer | null;
   audioTransport: PlainTransport<AppData> | null;
-  router: any;
+  router: Router<AppData> | null;
+  streamHandle: TExternalStreamHandle | null;
   routerCloseHandler: ((...args: unknown[]) => void) | null;
   producerCloseHandler: ((...args: unknown[]) => void) | null;
   currentSong: string | null;
@@ -36,6 +40,7 @@ const createInitialState = (): ChannelStreamState => ({
   audioProducer: null,
   audioTransport: null,
   router: null,
+  streamHandle: null,
   routerCloseHandler: null,
   producerCloseHandler: null,
   currentSong: null,
@@ -78,22 +83,16 @@ const enqueueSource = (
   invokerUserId: number,
 ): number => {
   const state = getState(channelId);
+
   state.queue.push({ sourceUrl, invokerUserId });
+
   return state.queue.length;
 };
 
 const takeNextFromQueue = (channelId: number): TQueueItem | null => {
   const state = getState(channelId);
+
   return state.queue.shift() ?? null;
-};
-
-const clearQueue = (channelId: number): number => {
-  const state = getState(channelId);
-  const cleared = state.queue.length;
-
-  state.queue = [];
-
-  return cleared;
 };
 
 const removeQueueItem = (
@@ -116,33 +115,6 @@ const removeQueueItem = (
   return removedItem ?? null;
 };
 
-const buildQueueText = (channelId: number): string => {
-  const state = getState(channelId);
-
-  if (!state.streamActive && state.queue.length === 0) {
-    return "Queue is empty.";
-  }
-
-  const lines: string[] = [];
-
-  if (state.streamActive && state.currentSong) {
-    lines.push(`Now playing: ${state.currentSong}`);
-  }
-
-  if (state.queue.length === 0) {
-    lines.push("Queue: (empty)");
-    return lines.join("\n");
-  }
-
-  lines.push("Queue:");
-
-  for (const [index, item] of state.queue.entries()) {
-    lines.push(`${index + 1}. ${formatSourceLabel(item.sourceUrl)}`);
-  }
-
-  return lines.join("\n");
-};
-
 const buildQueueEntries = (state: ChannelStreamState): PlayerQueueEntry[] =>
   state.queue.map((item, index) => ({
     position: index + 1,
@@ -158,19 +130,17 @@ const emptyPlayerStateSnapshot = (): PlayerStateSnapshot => ({
   streamStarting: false,
   playbackStartedAtEpochMs: null,
   currentTrackDurationSeconds: null,
-  currentTrackEndsAtEpochMs: null,
   queue: [],
-  queueText: "Queue is empty.",
 });
 
 const getPlayerStateSnapshot = (
   channelId?: number | null,
 ): PlayerStateSnapshot => {
-  if (!channelId) {
+  const state = channelId ? getExistingState(channelId) : undefined;
+
+  if (!state) {
     return emptyPlayerStateSnapshot();
   }
-
-  const state = getState(channelId);
 
   return {
     currentSong: state.currentSong,
@@ -180,14 +150,7 @@ const getPlayerStateSnapshot = (
     streamStarting: state.streamStarting,
     playbackStartedAtEpochMs: state.playbackStartedAtEpochMs,
     currentTrackDurationSeconds: state.currentTrackDurationSeconds,
-    currentTrackEndsAtEpochMs:
-      state.playbackStartedAtEpochMs !== null &&
-      state.currentTrackDurationSeconds !== null
-        ? state.playbackStartedAtEpochMs +
-          state.currentTrackDurationSeconds * 1000
-        : null,
     queue: buildQueueEntries(state),
-    queueText: buildQueueText(channelId),
   };
 };
 
@@ -199,7 +162,7 @@ const clearAllChannelStates = (): void => {
 
 export {
   clearAllChannelStates,
-  clearQueue,
+  emptyPlayerStateSnapshot,
   enqueueSource,
   formatSourceLabel,
   getChannelIds,
