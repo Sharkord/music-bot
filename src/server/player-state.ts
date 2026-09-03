@@ -33,6 +33,8 @@ type ChannelStreamState = {
   endAction: "none" | "next" | "stop";
 };
 
+const DEFAULT_VOLUME = 50;
+
 const channelStreams = new Map<number, ChannelStreamState>();
 
 const createInitialState = (): ChannelStreamState => ({
@@ -50,7 +52,7 @@ const createInitialState = (): ChannelStreamState => ({
   streamStarting: false,
   playbackStartedAtEpochMs: null,
   currentTrackDurationSeconds: null,
-  volume: 50,
+  volume: DEFAULT_VOLUME,
   queue: [],
   endAction: "none",
 });
@@ -130,6 +132,7 @@ const emptyPlayerStateSnapshot = (): PlayerStateSnapshot => ({
   streamStarting: false,
   playbackStartedAtEpochMs: null,
   currentTrackDurationSeconds: null,
+  volume: DEFAULT_VOLUME,
   queue: [],
 });
 
@@ -150,6 +153,7 @@ const getPlayerStateSnapshot = (
     streamStarting: state.streamStarting,
     playbackStartedAtEpochMs: state.playbackStartedAtEpochMs,
     currentTrackDurationSeconds: state.currentTrackDurationSeconds,
+    volume: state.volume,
     queue: buildQueueEntries(state),
   };
 };
@@ -162,6 +166,7 @@ const clearAllChannelStates = (): void => {
 
 export {
   clearAllChannelStates,
+  DEFAULT_VOLUME,
   emptyPlayerStateSnapshot,
   enqueueSource,
   formatSourceLabel,

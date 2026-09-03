@@ -12,6 +12,7 @@ type PlayerStateSnapshot = {
   streamStarting: boolean;
   playbackStartedAtEpochMs: number | null;
   currentTrackDurationSeconds: number | null;
+  volume: number;
   queue: PlayerQueueEntry[];
 };
 
@@ -44,6 +45,10 @@ type TSharkord = {
     };
     stopMusic: {
       payload: void;
+      response: PlayerActionResponse;
+    };
+    setVolume: {
+      payload: { volume: number };
       response: PlayerActionResponse;
     };
   };

@@ -27,6 +27,10 @@ to a voice channel:
   something is already on.
 - **Stop** — stops playback and clears the channel's playback state.
 - **Skip** — moves to the next queued track.
+- **Volume** — the master level everyone hears. ffmpeg bakes the level in when
+  a track starts, so a change applies from the next track on. To change what
+  *you* hear right now, use the volume control on the stream's card in the
+  voice channel, which Sharkord provides per listener.
 - Hover a queue row to play it immediately or drop it from the queue.
 
 ## Permissions

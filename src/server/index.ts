@@ -494,6 +494,34 @@ const onLoad = async (ctx: TMusicContext) => {
   });
 
   ctx.actions.register({
+    name: "setVolume",
+    description: "Sets the channel's master volume, used by the next track",
+    requires: Permission.JOIN_VOICE_CHANNELS,
+    executes: async (invoker, payload) => {
+      const channelId = requireVoiceChannelId(
+        invoker.currentVoiceChannelId,
+        "You must be in a voice channel to change the volume.",
+      );
+
+      if (!Number.isFinite(payload.volume)) {
+        throw new Error("Volume must be a number between 0 and 100.");
+      }
+
+      const volume = Math.min(100, Math.max(0, Math.round(payload.volume)));
+
+      getState(channelId).volume = volume;
+
+      // ffmpeg bakes the volume filter in at spawn time, so the track already
+      // playing keeps the level it started with
+      return buildActionResult(
+        ctx,
+        `Volume set to ${volume}%. It applies from the next track.`,
+        channelId,
+      );
+    },
+  });
+
+  ctx.actions.register({
     name: "stopMusic",
     description: "Stops playback and clears the channel's playback state",
     requires: Permission.JOIN_VOICE_CHANNELS,

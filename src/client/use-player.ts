@@ -11,6 +11,7 @@ const EMPTY_PLAYER_STATE: PlayerStateSnapshot = {
   streamStarting: false,
   playbackStartedAtEpochMs: null,
   currentTrackDurationSeconds: null,
+  volume: 50,
   queue: [],
 };
 
@@ -60,6 +61,7 @@ const usePlayer = () => {
     play: useCanUseAction<TSharkord>("playMusic"),
     skip: useCanUseAction<TSharkord>("nextMusic"),
     stop: useCanUseAction<TSharkord>("stopMusic"),
+    volume: useCanUseAction<TSharkord>("setVolume"),
     jump: useCanUseAction<TSharkord>("jumpToQueueItem"),
     remove: useCanUseAction<TSharkord>("removeQueueItem"),
   };
@@ -139,6 +141,7 @@ const usePlayer = () => {
       run(() => callAction("jumpToQueueItem", { position })),
     skip: () => run(() => callAction("nextMusic")),
     stop: () => run(() => callAction("stopMusic")),
+    setVolume: (volume: number) => run(() => callAction("setVolume", { volume })),
   };
 };
 

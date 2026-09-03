@@ -33,10 +33,33 @@ const SkipIcon = ({ size = 18 }: IconProps) => (
   </svg>
 );
 
+const VolumeIcon = ({ size = 16 }: IconProps) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+    <path d="M11.3 3.9c.6-.5 1.5 0 1.5.8v14.6c0 .8-.9 1.3-1.5.8L6.6 16H3.8c-.7 0-1.3-.6-1.3-1.3V9.3C2.5 8.6 3.1 8 3.8 8h2.8l4.7-4.1z" />
+    <path d="M16.2 8.3a1 1 0 0 1 1.4 0 5.2 5.2 0 0 1 0 7.4 1 1 0 1 1-1.4-1.4 3.2 3.2 0 0 0 0-4.6 1 1 0 0 1 0-1.4z" />
+  </svg>
+);
+
+const MuteIcon = ({ size = 16 }: IconProps) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+    <path d="M11.3 3.9c.6-.5 1.5 0 1.5.8v14.6c0 .8-.9 1.3-1.5.8L6.6 16H3.8c-.7 0-1.3-.6-1.3-1.3V9.3C2.5 8.6 3.1 8 3.8 8h2.8l4.7-4.1z" />
+    <path d="m17.4 10.6 1.9-1.9 1.2 1.2-1.9 1.9 1.9 1.9-1.2 1.2-1.9-1.9-1.9 1.9-1.2-1.2 1.9-1.9-1.9-1.9 1.2-1.2z" />
+  </svg>
+);
+
 const CloseIcon = ({ size = 14 }: IconProps) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
     <path d="M6.2 4.8 12 10.6l5.8-5.8 1.4 1.4L13.4 12l5.8 5.8-1.4 1.4L12 13.4l-5.8 5.8-1.4-1.4L10.6 12 4.8 6.2z" />
   </svg>
 );
 
-export { CloseIcon, NoteIcon, PlayIcon, SearchIcon, SkipIcon, StopIcon };
+export {
+  CloseIcon,
+  MuteIcon,
+  NoteIcon,
+  PlayIcon,
+  SearchIcon,
+  SkipIcon,
+  StopIcon,
+  VolumeIcon,
+};

@@ -1,6 +1,15 @@
 import { Button, Popover, PopoverContent, PopoverTrigger } from "@sharkord/ui";
-import { memo, useState } from "react";
-import { NoteIcon, PlayIcon, SearchIcon, SkipIcon, StopIcon } from "./icons";
+import type { CSSProperties } from "react";
+import { memo, useEffect, useState } from "react";
+import {
+  MuteIcon,
+  NoteIcon,
+  PlayIcon,
+  SearchIcon,
+  SkipIcon,
+  StopIcon,
+  VolumeIcon,
+} from "./icons";
 import { Queue } from "./queue";
 import { useUserName } from "./store";
 import { panelStyle } from "./styles";
@@ -22,11 +31,17 @@ const PlayerPanel = ({ controller }: PlayerPanelProps) => {
     player,
     progressPercent,
     remove,
+    setVolume,
     skip,
     stop,
   } = controller;
   const [query, setQuery] = useState("");
+  // held locally while dragging, so the slider does not fight its own pushes
+  const [volume, setVolumeDraft] = useState(player.volume);
+
   const addedBy = useUserName(player.currentInvokerUserId);
+
+  useEffect(() => setVolumeDraft(player.volume), [player.volume]);
 
   const isPlaying = player.streamActive;
   const isLoading = player.streamStarting;
@@ -121,32 +136,52 @@ const PlayerPanel = ({ controller }: PlayerPanelProps) => {
       </div>
 
       <div className="mb-controls">
-        <button
-          type="button"
-          className="mb-ctrl mb-ctrl-main"
-          title={isPlaying ? "Stop" : "Nothing to stop"}
-          aria-label={isPlaying ? "Stop playback" : "Nothing to stop"}
-          disabled={isBusy || isDisconnected || !isPlaying || !can.stop}
-          onClick={stop}
-        >
-          {isPlaying ? <StopIcon size={20} /> : <PlayIcon size={22} />}
-        </button>
+        <div className="mb-transport">
+          <button
+            type="button"
+            className="mb-ctrl mb-ctrl-main"
+            title={isPlaying ? "Stop" : "Nothing to stop"}
+            aria-label={isPlaying ? "Stop playback" : "Nothing to stop"}
+            disabled={isBusy || isDisconnected || !isPlaying || !can.stop}
+            onClick={stop}
+          >
+            {isPlaying ? <StopIcon size={20} /> : <PlayIcon size={22} />}
+          </button>
 
-        <button
-          type="button"
-          className="mb-ctrl"
-          title="Skip to the next track"
-          aria-label="Skip to the next track"
-          disabled={
-            isBusy ||
-            isDisconnected ||
-            !can.skip ||
-            (!isPlaying && player.queue.length === 0)
-          }
-          onClick={skip}
-        >
-          <SkipIcon size={22} />
-        </button>
+          <button
+            type="button"
+            className="mb-ctrl"
+            title="Skip to the next track"
+            aria-label="Skip to the next track"
+            disabled={
+              isBusy ||
+              isDisconnected ||
+              !can.skip ||
+              (!isPlaying && player.queue.length === 0)
+            }
+            onClick={skip}
+          >
+            <SkipIcon size={22} />
+          </button>
+        </div>
+
+        <div className="mb-volume">
+          {volume === 0 ? <MuteIcon /> : <VolumeIcon />}
+          <input
+            className="mb-volume-input"
+            type="range"
+            min={0}
+            max={100}
+            value={volume}
+            style={{ "--mb-volume": `${volume}%` } as CSSProperties}
+            aria-label="Master volume"
+            title={`Master volume ${volume}% — applies from the next track`}
+            disabled={isDisconnected || !can.volume}
+            onChange={(event) => setVolumeDraft(Number(event.target.value))}
+            onPointerUp={() => setVolume(volume)}
+            onKeyUp={() => setVolume(volume)}
+          />
+        </div>
       </div>
 
       {error ? <div className="mb-note">{error}</div> : null}

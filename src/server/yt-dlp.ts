@@ -1,7 +1,6 @@
 import { getCookiesPath, getYtDlpBinaryPath } from "./paths";
 import { pathExists } from "./downloads";
 
-type TYtDlpResult = { url: string; title: string };
 type TYtDlpMetadataResult = {
   title: string;
   thumbnailUrl?: string;
@@ -150,49 +149,6 @@ const runYtDlp = async (
   }
 };
 
-const fetchYouTubeAudio = async (
-  sourceUrl: string,
-  options: TYtDlpOptions,
-): Promise<TYtDlpResult> => {
-  const ytDlpPath = getYtDlpBinaryPath();
-
-  options.log("Using yt-dlp binary at:", ytDlpPath);
-  options.log("Fetching audio URL from YouTube:", sourceUrl);
-
-  const base = await getYtDlpBaseArgs(options);
-
-  const cmd = [
-    ytDlpPath,
-    ...base,
-    "-f",
-    "bestaudio",
-    "-g",
-    "--get-title",
-    sourceUrl,
-  ];
-
-  options.log("Running command:", cmd.join(" "));
-
-  const res = await runYtDlp(cmd, "audio URL fetch", options);
-
-  if (res.exitCode !== 0) {
-    throw new Error(`yt-dlp failed (exit ${res.exitCode})`);
-  }
-
-  const lines = res.stdout.trim().split(/\r?\n/).filter(Boolean);
-  const title = lines[0] ?? sourceUrl;
-  const url = lines[1];
-
-  if (!url) {
-    throw new Error("yt-dlp returned empty URL");
-  }
-
-  options.log("Audio URL fetched:", url);
-  options.log("Title fetched:", title);
-
-  return { url, title };
-};
-
 const parseYtDlpMetadata = (
   stdout: string,
   sourceUrl: string,
@@ -293,10 +249,9 @@ const spawnYouTubeAudioPipe = async (
 };
 
 export {
-  fetchYouTubeAudio,
   fetchYouTubeMetadata,
   isYouTubeUrl,
   logYtDlpLine,
   spawnYouTubeAudioPipe,
 };
-export type { TYtDlpResult, TYtDlpMetadataResult, TYtDlpOptions };
+export type { TYtDlpMetadataResult, TYtDlpOptions };

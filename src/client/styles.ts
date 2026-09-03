@@ -67,8 +67,11 @@ const CSS = `
 }
 
 .mb-controls {
-  display: flex; align-items: center; justify-content: center; gap: 24px;
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
   padding: 12px 16px 16px;
+}
+.mb-transport {
+  grid-column: 2; display: flex; align-items: center; gap: 24px;
 }
 .mb-ctrl {
   display: grid; place-items: center; padding: 4px; border: 0;
@@ -83,6 +86,45 @@ const CSS = `
 }
 .mb-ctrl-main:hover:not(:disabled) { color: #000; transform: scale(1.06); }
 .mb-ctrl-main:disabled { background: #535353; color: #1a1a1a; }
+
+.mb-volume {
+  grid-column: 3; justify-self: end; display: flex; align-items: center; gap: 6px;
+}
+.mb-volume svg { color: #b3b3b3; flex: none; }
+.mb-volume:hover svg { color: #fff; }
+.mb-volume-input {
+  width: 72px; height: 12px; margin: 0; padding: 0;
+  background: transparent; appearance: none; -webkit-appearance: none;
+  cursor: pointer;
+}
+.mb-volume-input:disabled { cursor: not-allowed; opacity: 0.4; }
+.mb-volume-input::-webkit-slider-runnable-track {
+  height: 4px; border-radius: 999px;
+  background: linear-gradient(
+    to right, #fff 0 var(--mb-volume), #4d4d4d var(--mb-volume) 100%
+  );
+}
+.mb-volume-input::-moz-range-track { height: 4px; border-radius: 999px; background: #4d4d4d; }
+.mb-volume-input::-moz-range-progress { height: 4px; border-radius: 999px; background: #fff; }
+.mb-volume:hover .mb-volume-input::-webkit-slider-runnable-track {
+  background: linear-gradient(
+    to right, ${ACCENT} 0 var(--mb-volume), #4d4d4d var(--mb-volume) 100%
+  );
+}
+.mb-volume:hover .mb-volume-input::-moz-range-progress { background: ${ACCENT}; }
+.mb-volume-input::-webkit-slider-thumb {
+  appearance: none; -webkit-appearance: none; width: 12px; height: 12px;
+  margin-top: -4px; border: 0; border-radius: 50%; background: #fff;
+  opacity: 0; transition: opacity 0.15s ease;
+}
+.mb-volume-input::-moz-range-thumb {
+  width: 12px; height: 12px; border: 0; border-radius: 50%; background: #fff;
+  opacity: 0; transition: opacity 0.15s ease;
+}
+.mb-volume:hover .mb-volume-input::-webkit-slider-thumb,
+.mb-volume-input:focus-visible::-webkit-slider-thumb { opacity: 1; }
+.mb-volume:hover .mb-volume-input::-moz-range-thumb,
+.mb-volume-input:focus-visible::-moz-range-thumb { opacity: 1; }
 
 .mb-section { border-top: 1px solid #242424; padding: 12px 8px 10px; }
 .mb-section-head {
