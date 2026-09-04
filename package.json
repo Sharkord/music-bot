@@ -1,6 +1,6 @@
 {
   "name": "music-bot",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "module": "src/server/index.ts",
   "type": "module",
   "scripts": {
@@ -13,8 +13,6 @@
   },
   "peerDependencies": {
     "typescript": "^5",
-    "react": "^19",
-    "reselect": "^5",
-    "re-reselect": "^5"
+    "react": "^19"
   }
 }

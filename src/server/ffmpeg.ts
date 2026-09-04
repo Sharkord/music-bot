@@ -2,6 +2,7 @@ import { getFfmpegBinaryPath } from "./paths";
 import {
   fetchYouTubeMetadata,
   isYouTubeUrl,
+  logYtDlpLine,
   spawnYouTubeAudioPipe,
 } from "./yt-dlp";
 
@@ -34,6 +35,60 @@ type TMusicOptions = {
 };
 
 const FORCE_KILL_TIMEOUT_MS = 1500;
+
+const readLines = async (
+  stream: ReadableStream<Uint8Array>,
+  onLine: (line: string) => void,
+): Promise<void> => {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+
+  let buffer = "";
+  let reads = 0;
+
+  const flush = (text: string) => {
+    const trimmedLine = text.trim();
+
+    if (trimmedLine) onLine(trimmedLine);
+  };
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+
+      // progress rewrites the line with \r, so both terminators end a line
+      const lines = buffer.split(/\r\n|[\n\r]/);
+
+      buffer = lines.pop() ?? "";
+
+      for (const line of lines) flush(line);
+
+      // a tiny yield, so a chatty process cannot starve the event loop
+      if (++reads % 25 === 0) await new Promise<void>((r) => setTimeout(r, 0));
+    }
+
+    flush(buffer);
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {}
+  }
+};
+
+const logFfmpegLine = (line: string, options: TMusicOptions): void => {
+  if (/\[(error|fatal|panic)\]/.test(line)) {
+    options.error("[FFmpeg]", line);
+
+    return;
+  }
+
+  options.log("[FFmpeg]", line);
+};
+
 const pendingForcedKill = new WeakSet<object>();
 
 const terminateProcess = (
@@ -139,7 +194,7 @@ const spawnMusicStream = async (
     "-hide_banner",
     "-nostats",
     "-loglevel",
-    "warning",
+    "level+warning",
 
     ...inputArgs,
     "-re",
@@ -181,65 +236,18 @@ const spawnMusicStream = async (
     stdin: ytDlpProcess?.stdout ?? "ignore",
   });
 
-  // stderr forwarder (with a tiny yield to prevent event-loop starvation)
-  (async () => {
-    if (!ffmpegProcess.stderr) return;
+  if (ffmpegProcess.stderr) {
+    readLines(ffmpegProcess.stderr, (line) =>
+      logFfmpegLine(line, options),
+    ).catch((err: unknown) => options.error("[FFmpeg stderr error]", err));
+  }
 
-    const reader = ffmpegProcess.stderr.getReader();
-    const decoder = new TextDecoder();
-
-    let reads = 0;
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-
-        if (done) break;
-
-        const text = decoder.decode(value, { stream: true });
-
-        if (text.trim()) options.error("[FFmpeg]", text.trim());
-
-        reads++;
-
-        if (reads % 25 === 0) await new Promise<void>((r) => setTimeout(r, 0));
-      }
-    } catch (err) {
-      options.error("[FFmpeg stderr error]", err);
-    } finally {
-      try {
-        reader.releaseLock();
-      } catch {}
-    }
-  })();
-
-  // yt-dlp stderr forwarder (useful for extractor/proxy/cookie diagnostics)
-  (async () => {
-    if (!ytDlpProcess?.stderr || typeof ytDlpProcess.stderr === "number") {
-      return;
-    }
-
-    const reader = ytDlpProcess.stderr.getReader();
-    const decoder = new TextDecoder();
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-
-        if (done) break;
-
-        const text = decoder.decode(value, { stream: true });
-
-        if (text.trim()) options.error("[yt-dlp]", text.trim());
-      }
-    } catch (err) {
-      options.error("[yt-dlp stderr error]", err);
-    } finally {
-      try {
-        reader.releaseLock();
-      } catch {}
-    }
-  })();
+  // extractor, proxy and cookie diagnostics, most of it routine progress
+  if (ytDlpProcess?.stderr && typeof ytDlpProcess.stderr !== "number") {
+    readLines(ytDlpProcess.stderr, (line) => logYtDlpLine(line, options)).catch(
+      (err: unknown) => options.error("[yt-dlp stderr error]", err),
+    );
+  }
 
   if (ytDlpProcess) {
     ytDlpProcess.exited.then((exitCode) => {

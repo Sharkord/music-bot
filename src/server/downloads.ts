@@ -2,13 +2,15 @@ import type { PluginContext } from "@sharkord/plugin-sdk";
 import fs from "fs/promises";
 import path from "path";
 import {
-  BIN_DIR,
-  SERVER_DIR,
+  getBinDir,
+  getDownloadDir,
   getFfmpegBinaryPath,
   getYtDlpBinaryPath,
 } from "./paths";
 
-type TDownloadLogger = Pick<PluginContext, "log" | "error">;
+type TDownloadLogger = Pick<PluginContext["logger"], "log" | "error">;
+
+type TBinaryName = "ffmpeg" | "yt-dlp";
 
 const downloadPaths: {
   [key: string]: {
@@ -20,23 +22,21 @@ const downloadPaths: {
     ffmpeg:
       "https://github.com/diogomartino/plugin-binaries/releases/latest/download/ffmpeg-linux-x64.tar.gz",
     ytDlp:
-      "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux",
+      "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp_linux",
   },
   linux_arm64: {
     ffmpeg:
       "https://github.com/diogomartino/plugin-binaries/releases/latest/download/ffmpeg-linux-arm64.tar.gz",
     ytDlp:
-      "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux_aarch64",
+      "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp_linux_aarch64",
   },
   win32_x64: {
     ffmpeg:
       "https://github.com/diogomartino/plugin-binaries/releases/latest/download/ffmpeg-win64.tar.gz",
     ytDlp:
-      "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe",
+      "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp.exe",
   },
 };
-
-const DOWNLOAD_DIR = path.join(SERVER_DIR, "downloads");
 
 const ensureDir = async (dir: string, logger?: TDownloadLogger) => {
   try {
@@ -193,7 +193,7 @@ const ensureBinaryTargetPath = async (
   binaryPath: string,
   logger: TDownloadLogger,
 ): Promise<void> => {
-  await ensureDir(BIN_DIR, logger);
+  await ensureDir(getBinDir(), logger);
 
   if (!(await pathExists(binaryPath))) {
     return;
@@ -207,7 +207,12 @@ const ensureBinaryTargetPath = async (
   }
 };
 
-const makeExecutable = async (binaryPath: string): Promise<void> => {
+const installBinary = async (
+  downloadedPath: string,
+  binaryPath: string,
+): Promise<void> => {
+  await fs.rename(downloadedPath, binaryPath);
+
   if (process.platform !== "win32") {
     await fs.chmod(binaryPath, 0o755);
   }
@@ -225,7 +230,7 @@ const getDownloadUrl = (arch: string, binary: "ffmpeg" | "ytDlp"): string => {
   return url;
 };
 
-const downloadFFmpeg = async (logger: TDownloadLogger) => {
+const downloadFFmpeg = async (tempDir: string, logger: TDownloadLogger) => {
   const arch = getPlatformArch();
   const url = getDownloadUrl(arch, "ffmpeg");
   const binaryName = getFfmpegBinaryName();
@@ -235,16 +240,11 @@ const downloadFFmpeg = async (logger: TDownloadLogger) => {
 
   const urlFilename = path.basename(new URL(url).pathname);
   const extractedName = urlFilename.replace(/\.tar\.gz$/, "");
-  const archivePath = path.join(DOWNLOAD_DIR, `ffmpeg_${arch}.tar.gz`);
-  const extractPath = path.join(DOWNLOAD_DIR, `ffmpeg_extract_${arch}`);
+  const archivePath = path.join(tempDir, `ffmpeg_${arch}.tar.gz`);
+  const extractPath = path.join(tempDir, "extract");
 
-  await ensureDir(DOWNLOAD_DIR, logger);
   await ensureBinaryTargetPath(binaryPath, logger);
-
-  await fs.rm(extractPath, { recursive: true, force: true });
-
   await downloadFile(url, archivePath, logger);
-
   await extractArchive(archivePath, extractPath, logger);
 
   const extractedBinaryPath =
@@ -257,36 +257,82 @@ const downloadFFmpeg = async (logger: TDownloadLogger) => {
     );
   }
 
-  await fs.copyFile(extractedBinaryPath, binaryPath);
-  await makeExecutable(binaryPath);
-  await fs.rm(extractPath, { recursive: true, force: true });
+  await installBinary(extractedBinaryPath, binaryPath);
 
   logger.log(`FFmpeg downloaded successfully to ${binaryPath}`);
 };
 
-const downloadYtDlp = async (logger: TDownloadLogger) => {
+const downloadYtDlp = async (tempDir: string, logger: TDownloadLogger) => {
   const arch = getPlatformArch();
   const url = getDownloadUrl(arch, "ytDlp");
   const binaryPath = getYtDlpBinaryPath();
   const binaryName = getYtDlpBinaryName();
-  const archivePath = path.join(DOWNLOAD_DIR, `${binaryName}_${arch}`);
+  const downloadPath = path.join(tempDir, `${binaryName}_${arch}`);
 
   logger.log(`Downloading yt-dlp for architecture: ${arch} from URL: ${url}`);
 
-  await ensureDir(DOWNLOAD_DIR, logger);
   await ensureBinaryTargetPath(binaryPath, logger);
-  await downloadFile(url, archivePath, logger);
-  await fs.copyFile(archivePath, binaryPath);
-  await makeExecutable(binaryPath);
+  await downloadFile(url, downloadPath, logger);
+  await installBinary(downloadPath, binaryPath);
 
   logger.log(`yt-dlp downloaded successfully to ${binaryPath}`);
 };
 
-const ensureBinary = async (
-  binaryPath: string,
-  download: (logger: TDownloadLogger) => Promise<void>,
+const BINARIES = {
+  ffmpeg: { download: downloadFFmpeg, getPath: getFfmpegBinaryPath },
+  "yt-dlp": { download: downloadYtDlp, getPath: getYtDlpBinaryPath },
+} satisfies Record<
+  TBinaryName,
+  {
+    download: (tempDir: string, logger: TDownloadLogger) => Promise<void>;
+    getPath: () => string;
+  }
+>;
+
+const inFlightDownloads = new Map<TBinaryName, Promise<void>>();
+
+const runDownload = async (
+  name: TBinaryName,
   logger: TDownloadLogger,
 ): Promise<void> => {
+  const tempDir = path.join(getDownloadDir(), name);
+
+  await fs.rm(tempDir, { recursive: true, force: true });
+  await ensureDir(tempDir, logger);
+
+  try {
+    await BINARIES[name].download(tempDir, logger);
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+  }
+};
+
+const downloadBinary = (
+  name: TBinaryName,
+  logger: TDownloadLogger,
+): Promise<void> => {
+  const running = inFlightDownloads.get(name);
+
+  if (running) return running;
+
+  const task = runDownload(name, logger).finally(() =>
+    inFlightDownloads.delete(name),
+  );
+
+  inFlightDownloads.set(name, task);
+
+  return task;
+};
+
+const isBinaryDownloading = (name: TBinaryName): boolean =>
+  inFlightDownloads.has(name);
+
+const ensureBinary = async (
+  name: TBinaryName,
+  logger: TDownloadLogger,
+): Promise<void> => {
+  const binaryPath = BINARIES[name].getPath();
+
   if (await pathExists(binaryPath)) {
     const stats = await fs.stat(binaryPath);
 
@@ -297,7 +343,8 @@ const ensureBinary = async (
   }
 
   logger.log(`Binary missing at ${binaryPath}, starting download`);
-  await download(logger);
+
+  await downloadBinary(name, logger);
 };
 
 const areRequiredBinariesPresent = async (): Promise<boolean> => {
@@ -309,22 +356,22 @@ const areRequiredBinariesPresent = async (): Promise<boolean> => {
   return ffmpegExists && ytDlpExists;
 };
 
-const ensureRequiredBinaries = async (ctx: PluginContext) => {
-  ctx.log("Ensuring required music binaries are available");
+const ensureRequiredBinaries = async (logger: TDownloadLogger) => {
+  logger.log("Ensuring required music binaries are available");
 
   await Promise.all([
-    ensureBinary(getFfmpegBinaryPath(), downloadFFmpeg, ctx),
-    ensureBinary(getYtDlpBinaryPath(), downloadYtDlp, ctx),
+    ensureBinary("ffmpeg", logger),
+    ensureBinary("yt-dlp", logger),
   ]);
 
-  try {
-    ctx.log(`Cleaning temporary download directory ${DOWNLOAD_DIR}`);
-    await fs.rm(DOWNLOAD_DIR, { recursive: true, force: true });
-  } catch {
-    // ignore
-  }
-
-  ctx.log("Required music binaries are available");
+  logger.log("Required music binaries are available");
 };
 
-export { areRequiredBinariesPresent, ensureRequiredBinaries, pathExists };
+export {
+  areRequiredBinariesPresent,
+  downloadBinary,
+  ensureRequiredBinaries,
+  isBinaryDownloading,
+  pathExists,
+};
+export type { TBinaryName };
