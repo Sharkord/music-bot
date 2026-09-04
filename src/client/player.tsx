@@ -25,7 +25,6 @@ const PlayerPanel = ({ controller }: PlayerPanelProps) => {
     elapsedSeconds,
     error,
     isBusy,
-    isDisconnected,
     jumpTo,
     play,
     player,
@@ -45,8 +44,7 @@ const PlayerPanel = ({ controller }: PlayerPanelProps) => {
 
   const isPlaying = player.streamActive;
   const isLoading = player.streamStarting;
-  const canSubmit =
-    query.trim() !== "" && !isBusy && !isDisconnected && can.play;
+  const canSubmit = query.trim() !== "" && !isBusy && can.play;
 
   const submit = () => {
     if (!canSubmit) return;
@@ -71,7 +69,7 @@ const PlayerPanel = ({ controller }: PlayerPanelProps) => {
             value={query}
             placeholder="Search or paste a link"
             aria-label="Search or paste a link"
-            disabled={isDisconnected || !can.play}
+            disabled={!can.play}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={(event) => {
               if (event.key !== "Enter") return;
@@ -111,13 +109,11 @@ const PlayerPanel = ({ controller }: PlayerPanelProps) => {
           </div>
           <div className="mb-title">{title}</div>
           <div className="mb-sub">
-            {isDisconnected
-              ? "Join a voice channel to listen"
-              : !can.play
-                ? "You cannot control the player"
-                : isPlaying && addedBy
-                  ? `Added by ${addedBy}`
-                  : "Search above to start the queue"}
+            {!can.play
+              ? "You cannot control the player"
+              : isPlaying && addedBy
+                ? `Added by ${addedBy}`
+                : "Search above to start the queue"}
           </div>
         </div>
       </div>
@@ -142,7 +138,7 @@ const PlayerPanel = ({ controller }: PlayerPanelProps) => {
             className="mb-ctrl mb-ctrl-main"
             title={isPlaying ? "Stop" : "Nothing to stop"}
             aria-label={isPlaying ? "Stop playback" : "Nothing to stop"}
-            disabled={isBusy || isDisconnected || !isPlaying || !can.stop}
+            disabled={isBusy || !isPlaying || !can.stop}
             onClick={stop}
           >
             {isPlaying ? <StopIcon size={20} /> : <PlayIcon size={22} />}
@@ -154,10 +150,7 @@ const PlayerPanel = ({ controller }: PlayerPanelProps) => {
             title="Skip to the next track"
             aria-label="Skip to the next track"
             disabled={
-              isBusy ||
-              isDisconnected ||
-              !can.skip ||
-              (!isPlaying && player.queue.length === 0)
+              isBusy || !can.skip || (!isPlaying && player.queue.length === 0)
             }
             onClick={skip}
           >
@@ -176,7 +169,7 @@ const PlayerPanel = ({ controller }: PlayerPanelProps) => {
             style={{ "--mb-volume": `${volume}%` } as CSSProperties}
             aria-label="Master volume"
             title={`Master volume ${volume}% — applies from the next track`}
-            disabled={isDisconnected || !can.volume}
+            disabled={!can.volume}
             onChange={(event) => setVolumeDraft(Number(event.target.value))}
             onPointerUp={() => setVolume(volume)}
             onKeyUp={() => setVolume(volume)}
@@ -205,6 +198,10 @@ const PlayerPanel = ({ controller }: PlayerPanelProps) => {
 const Player = memo(() => {
   const [open, setOpen] = useState(false);
   const controller = usePlayer();
+
+  // every control needs a voice channel to act on, so out of one there is
+  // nothing the panel could do: the whole button goes away
+  if (controller.isDisconnected) return null;
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
