@@ -80,3 +80,5 @@ following solutions:
 
 Set `SHARKORD_PLUGINS_PATH` in `.env` and every `bun run build` lands straight in
 your server's plugins directory.
+
+`bun test` runs the unit tests.

@@ -75,7 +75,7 @@ const readLines = async (
   } finally {
     try {
       reader.releaseLock();
-    } catch {}
+    } catch { }
   }
 };
 
@@ -104,7 +104,7 @@ const terminateProcess = (
 
   try {
     process.kill("SIGTERM");
-  } catch {}
+  } catch { }
 
   if (pendingForcedKill.has(process as unknown as object)) {
     return;
@@ -119,7 +119,7 @@ const terminateProcess = (
 
     try {
       process.kill("SIGKILL");
-    } catch {}
+    } catch { }
   }, FORCE_KILL_TIMEOUT_MS);
 };
 
@@ -139,27 +139,41 @@ const spawnMusicStream = async (
   if (isYouTubeUrl(options.sourceUrl)) {
     options.log("Using yt-dlp -> ffmpeg pipe mode for YouTube source");
 
-    const metadata = await fetchYouTubeMetadata(options.sourceUrl, {
+    const ytDlpOptions = {
       log: options.log,
       error: options.error,
       debug: options.debug,
       proxy: options.proxy,
-    });
+    };
 
-    title = metadata.title;
-    thumbnailUrl = metadata.thumbnailUrl;
-    durationSeconds = metadata.durationSeconds;
+    // metadata and audio are two independent yt-dlp runs, and each one pays
+    // the full extraction cost. Running them side by side halves the wait
+    // before the first audio byte instead of paying both in sequence.
+    const [metadataResult, pipeResult] = await Promise.allSettled([
+      fetchYouTubeMetadata(options.sourceUrl, ytDlpOptions),
+      spawnYouTubeAudioPipe(options.sourceUrl, ytDlpOptions),
+    ]);
 
-    ytDlpProcess = await spawnYouTubeAudioPipe(options.sourceUrl, {
-      log: options.log,
-      error: options.error,
-      debug: options.debug,
-      proxy: options.proxy,
-    });
+    if (pipeResult.status === "rejected") {
+      throw pipeResult.reason;
+    }
 
-    if (!ytDlpProcess.stdout) {
+    if (metadataResult.status === "rejected") {
+      terminateProcess(pipeResult.value);
+
+      throw metadataResult.reason;
+    }
+
+    if (!pipeResult.value.stdout) {
+      terminateProcess(pipeResult.value);
+
       throw new Error("yt-dlp pipe is not available");
     }
+
+    title = metadataResult.value.title;
+    thumbnailUrl = metadataResult.value.thumbnailUrl;
+    durationSeconds = metadataResult.value.durationSeconds;
+    ytDlpProcess = pipeResult.value;
 
     inputSource = "pipe:0";
     inputArgs = [];
@@ -285,5 +299,6 @@ const killMusicStream = (process: TSpawnedStreamProcess | null): void => {
   }
 };
 
-export { spawnMusicStream, killMusicStream };
+export { killMusicStream, spawnMusicStream };
 export type { TMusicOptions, TMusicStreamResult, TSpawnedStreamProcess };
+

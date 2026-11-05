@@ -174,6 +174,8 @@ const startMusicStream = async (
   }
 
   state.streamStarting = true;
+  // let everyone in the channel see the wait; resolving the source takes seconds
+  publishPlayerState(ctx, channelId);
 
   try {
     const router = ctx.voice.getRouter(channelId);
@@ -273,15 +275,15 @@ const startMusicStream = async (
     state.currentTrackDurationSeconds = result.durationSeconds ?? null;
     state.streamActive = true;
     state.endAction = "none";
+    state.streamStarting = false;
 
     publishPlayerState(ctx, channelId);
 
     return `Now playing: ${result.title}`;
   } catch (err) {
+    state.streamStarting = false;
     cleanupChannel(ctx, channelId);
     throw err;
-  } finally {
-    state.streamStarting = false;
   }
 };
 
